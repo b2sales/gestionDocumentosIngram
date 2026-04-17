@@ -1,0 +1,52 @@
+{
+  "grePDF": "\\\\servidor\\carpeta\\pdf",
+  "greTXT": "\\\\servidor\\carpeta\\proc_ok",
+  "dirPDFs": "\\\\servidor\\carpeta\\GR-PDF\\",
+  "dirEcommerce": "\\\\servidor\\carpeta\\GR-PDF\\ecomm\\",
+  "dirHpmps": "\\\\servidor\\carpeta\\GR-PDF\\hpmps\\",
+
+  "grePDFTest": "C:\\ruta\\local\\pdf",
+  "greTXTTest": "C:\\ruta\\local\\proc_ok",
+  "dirPDFsTest": "C:\\ruta\\local\\GD\\",
+  "dirEcommerceTest": "C:\\ruta\\local\\GD\\ecomm\\",
+  "dirHpmpsTest": "C:\\ruta\\local\\GD\\hpmps\\",
+  "processingConcurrency": "6",
+  "queueCapacity": "2000",
+  "fileReadyRetries": "30",
+  "fileReadyDelayMs": "1000",
+  "watcherInternalBufferSize": "65536",
+  "environmentTest": "False",
+
+  "idocFolder": "",
+  "idocFolderTest": "",
+  "idocContext": "data source=HOST;Initial Catalog=iDoc;User ID=...;Password=...;TrustServerCertificate=true",
+
+  "backOfficeContext": "data source=HOST;Initial Catalog=backOfficeDB;User ID=...;Password=...;TrustServerCertificate=true",
+  "backOfficeContextTest": "",
+
+  "greContext": "Server=HOST;Database=gre;Integrated Security=true;encrypt=false",
+
+  "Reconciliation": {
+    "Enabled": true,
+    "DailyTimeLocal": "20:00",
+    "OnlyTodaysFiles": false,
+    "GreEnabled": true,
+    "IdocEnabled": true,
+    "MaxConcurrent": 2,
+    "MaxFilesPerSource": 10000,
+    "SkipAlreadyInDatabase": true
+  },
+
+  "Smtp": {
+    "Enabled": false,
+    "Host": "",
+    "Port": 587,
+    "UserName": "",
+    "Password": "",
+    "From": "",
+    "To": "",
+    "UseTls": true,
+    "SubjectPrefix": "[GestionDocumentos] Error",
+    "ThrottleSeconds": 120
+  }
+}

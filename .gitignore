@@ -1,0 +1,27 @@
+## Build
+bin/
+obj/
+out/
+[Bb]uild/
+[Dd]ist/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## IDE
+.vs/
+.idea/
+*.swp
+*~
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Secrets / entorno local (copiar desde Parametros.example.json)
+Parametros.json
+
+## Logs / temp
+*.log
+*.tmp

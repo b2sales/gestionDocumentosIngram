@@ -1,0 +1,40 @@
+A;ImprDest;1;\\peliarwfnp1002\XEROX_B400_DIRECTORIO
+A;CODI_EMPR;1;1
+A;TipoDTE;1;9
+A;Serie;1;T001
+A;Correlativo;1;0118915
+A;FchEmis;1;2026-04-07
+A;HoraEmision;1;08:22:58
+A;RUTEmis;1;20267163228
+A;TipoRucEmis;1;6
+A;RznSocEmis;1;INGRAM MICRO S.A.C.
+B;NroLinDet;1;1
+B;VlrCodigo;1;6684111
+B;QtyItem;1;1.000
+B;UnmdItem;1;EA
+B;NmbItem;1;MOTO BUDS LOOP VERDE, PG38C07164
+E;TipoAdicSunat;1;01
+E;NmrLineasAdicSunat;1;01
+E;DescripcionAdicsunat;1;T001-0118915  |  Orden de Compra Cliente 3230855205  |  Nota de Venta SAP 7110565698  |  Documento Despacho 8109370325  |  Factura Sistema 9929388116  |  Ruta G00STD  |    |    |  Documento Ref F007-0655433 
+E;TipoAdicSunat;2;02
+E;NmrLineasDetalle;2;1
+E;NmrLineasAdicSunat;2;1
+E;DescripcionAdicsunat;2;
+G;IdentifTraslado;1;SUNAT_Envio
+G;MotivoTraslado;1;03
+G;DescTraslado;1; VENTA CON ENTREGA A TERCEROS
+G;TotalPesoTraslado;1;0.060
+G;UnmdTotalPeso;1;KGM
+G;RucTercero;1;73148575
+G;TipoRucTercero;1;1
+G;RazonTercero;1;HENDRIK ROJAS PINEDA ROJAS PINEDA
+G;DirParUbiGeo;1;150101
+G;DirParDireccion;1;Av Argentina 3131,,,Lima,Cercado de Lima,PE,15
+G;DirLlegUbiGeo;1;150101
+G;DirLlegDireccion;1;JIRON DE LA UNION 517,,,,LIMA-CERCADO DE LIMA,,PE,15
+G1;NroLinTramo;1;1
+G1;ModalidadTraslado;1;01
+G1;FechInicioTraslado;1;2026-04-07
+G1;RUCTranspor;1; 20556821438
+G1;TipoRucTrans;1;6
+G1;RazoTrans;1; DJR SOLUCIONES LOGISTICAS S.A.C.

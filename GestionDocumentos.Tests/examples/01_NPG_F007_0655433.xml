@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ns0:InvoiceEventPublisher xmlns:ns0="http://www.ingrammicro.com/Invoice/InvoiceEvent_v2_0/types">
+    <ns0:invoiceDetail>
+        <ns0:companyCode>PE</ns0:companyCode>
+        <ns0:invoiceDate>2026-04-07</ns0:invoiceDate>
+        <ns0:paymentIssueTime>11:21:58.0000</ns0:paymentIssueTime>
+        <ns0:salesOrderReason/>
+        <ns0:operationType>01</ns0:operationType>
+        <ns0:documentType>01</ns0:documentType>
+        <ns0:docNumber>F007</ns0:docNumber>
+        <ns0:sequentilaNumber>0655433</ns0:sequentilaNumber>
+        <ns0:paymentDueDate>2026-05-07</ns0:paymentDueDate>
+        <ns0:status>ORIGINAL</ns0:status>
+        <ns0:referenceDocNumber/>
+        <ns0:creditTypeNote/>
+        <ns0:creditorDebitReason/>
+        <ns0:originaDocumentType/>
+        <ns0:taxID>20267163228</ns0:taxID>
+        <ns0:ingramMicroAddress>
+            <ns0:companyName1>Ingram Micro S.A.C.</ns0:companyName1>
+            <ns0:companyName2>Ingram Micro S.A.C.</ns0:companyName2>
+            <ns0:identificationType>6</ns0:identificationType>
+            <ns0:street>JIRON CARPACCIO NRO 250 OFICINA 601</ns0:street>
+            <ns0:subDistrict/>
+            <ns0:city>Lima</ns0:city>
+            <ns0:district>SAN BORJA</ns0:district>
+            <ns0:department>LIMA</ns0:department>
+            <ns0:countryCode>PE</ns0:countryCode>
+            <ns0:UBIGEO>150130</ns0:UBIGEO>
+            <ns0:fiscalCode>0000</ns0:fiscalCode>
+        </ns0:ingramMicroAddress>
+        <ns0:billToDetails>
+            <ns0:customerTVAT>20604798591</ns0:customerTVAT>
+            <ns0:billToName>OPORTUTEK PERU S.A.C.</ns0:billToName>
+            <ns0:billToNumber>387108</ns0:billToNumber>
+            <ns0:identificationType>6</ns0:identificationType>
+            <ns0:street>CAL. PORTA NRO 170 INT 512 - COM. SAN MIGUEL DE MIRAFLORES</ns0:street>
+            <ns0:subDistrict> </ns0:subDistrict>
+            <ns0:city>LIMA</ns0:city>
+            <ns0:district>MIRAFLORES</ns0:district>
+            <ns0:department>LIMA</ns0:department>
+            <ns0:countryCode>PE</ns0:countryCode>
+            <ns0:UBIGEO>150122</ns0:UBIGEO>
+        </ns0:billToDetails>
+        <ns0:orderNumber>7110565698</ns0:orderNumber>
+        <ns0:otherDocument> </ns0:otherDocument>
+        <ns0:customerOrderNumber>3230855205</ns0:customerOrderNumber>
+        <ns0:SAPBillingDocumentNumber>9929388116</ns0:SAPBillingDocumentNumber>
+        <ns0:paymentMethod>30 días</ns0:paymentMethod>
+        <ns0:salesMan>203108</ns0:salesMan>
+        <ns0:soldToEmailId/>
+        <ns0:currencyCode>PEN</ns0:currencyCode>
+        <ns0:termsDescription>Pago al Vencimiento</ns0:termsDescription>
+        <ns0:extraDescription>TRESCIENTOS TREINTA Y 08/100</ns0:extraDescription>
+        <ns0:totalGlobalDiscount> </ns0:totalGlobalDiscount>
+        <ns0:totalDiscount>0</ns0:totalDiscount>
+        <ns0:totalTaxableAmount>279.73</ns0:totalTaxableAmount>
+        <ns0:totalNonTaxableAmount>0</ns0:totalNonTaxableAmount>
+        <ns0:totalUnEffectedAmount>0.00</ns0:totalUnEffectedAmount>
+        <ns0:totalCharges>0</ns0:totalCharges>
+        <ns0:totalOperationSales>0</ns0:totalOperationSales>
+        <ns0:totalIGVTaxAmount>50.35</ns0:totalIGVTaxAmount>
+        <ns0:totalISCTaxAmount>0</ns0:totalISCTaxAmount>
+        <ns0:otherTax> </ns0:otherTax>
+        <ns0:totalTaxValue>330.08</ns0:totalTaxValue>
+        <ns0:text1/>
+        <ns0:tax>
+            <ns0:taxTypeName>IGV</ns0:taxTypeName>
+            <ns0:taxCode>1000</ns0:taxCode>
+            <ns0:taxType>VAT</ns0:taxType>
+            <ns0:totalTaxAmount>50.35</ns0:totalTaxAmount>
+        </ns0:tax>
+        <ns0:line>
+            <ns0:stocKLine>
+                <ns0:partNumber>000000000006684111</ns0:partNumber>
+                <ns0:CodProdSunat>43211500</ns0:CodProdSunat>
+                <ns0:itemDescription>MOTO BUDS LOOP VERDE</ns0:itemDescription>
+                <ns0:quantity>1.000</ns0:quantity>
+                <ns0:unitOfMeasure>EA</ns0:unitOfMeasure>
+                <ns0:unitPrice>279.73</ns0:unitPrice>
+                <ns0:extendedPrice>330.08</ns0:extendedPrice>
+                <ns0:unitPriceWithoutTaxesTimesQuantity>279.73</ns0:unitPriceWithoutTaxesTimesQuantity>
+                <ns0:priceType>1</ns0:priceType>
+                <ns0:unitPriceWithTaxesTimesQuantity>330.08</ns0:unitPriceWithTaxesTimesQuantity>
+                <ns0:codeOfIdentity>10</ns0:codeOfIdentity>
+                <ns0:taxType>1000</ns0:taxType>
+                <ns0:taxDescription>VAT</ns0:taxDescription>
+                <ns0:taxName>IGV</ns0:taxName>
+                <ns0:totaltaxAmount>50.35</ns0:totaltaxAmount>
+            </ns0:stocKLine>
+        </ns0:line>
+    </ns0:invoiceDetail>
+</ns0:InvoiceEventPublisher>
