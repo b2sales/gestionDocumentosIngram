@@ -1,22 +1,31 @@
 using System.Data;
-using System.Globalization;
 using System.Text;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace GestionDocumentos.Idoc;
 
 public sealed class IdocRepository
 {
     private const int NameFileInChunkSize = 500;
-    private readonly string _connectionString;
+
+    /// <summary>
+    /// Códigos de error SQL Server para violaciones de clave única:
+    /// 2601 = duplicate key en índice único, 2627 = violación PK/UK constraint.
+    /// </summary>
+    private static readonly HashSet<int> DuplicateKeyErrorNumbers = [2601, 2627];
+
+    private readonly IOptionsMonitor<IdocOptions> _options;
     private readonly ILogger<IdocRepository> _logger;
 
-    public IdocRepository(string connectionString, ILogger<IdocRepository> logger)
+    public IdocRepository(IOptionsMonitor<IdocOptions> options, ILogger<IdocRepository> logger)
     {
-        _connectionString = connectionString;
+        _options = options;
         _logger = logger;
     }
+
+    private string ConnectionString => _options.CurrentValue.ConnectionString;
 
     public Task<bool> ExistsByNameFileAsync(string nameFile, CancellationToken cancellationToken) =>
         SqlTransientRetry.ExecuteAsync(
@@ -25,7 +34,7 @@ public sealed class IdocRepository
             async () =>
             {
                 const string sql = "SELECT 1 FROM Documentos WHERE NameFile = @NameFile;";
-                await using var connection = new SqlConnection(_connectionString);
+                await using var connection = new SqlConnection(ConnectionString);
                 await connection.OpenAsync(cancellationToken);
                 await using var cmd = new SqlCommand(sql, connection);
                 cmd.Parameters.Add("@NameFile", SqlDbType.NVarChar, 512).Value = nameFile;
@@ -53,7 +62,7 @@ public sealed class IdocRepository
             return result;
         }
 
-        await using var connection = new SqlConnection(_connectionString);
+        await using var connection = new SqlConnection(ConnectionString);
         await connection.OpenAsync(cancellationToken);
 
         for (var offset = 0; offset < nameFiles.Count; offset += NameFileInChunkSize)
@@ -98,6 +107,18 @@ public sealed class IdocRepository
             () => TryInsertDocumentCoreAsync(documento, cancellationToken),
             cancellationToken);
 
+    /// <remarks>
+    /// <para>
+    /// Idempotencia: se intenta el INSERT directamente (sin <c>SELECT COUNT(1)</c> previo, que con
+    /// <see cref="IsolationLevel.Serializable"/> podía causar escalamiento de locks y deadlocks bajo carga).
+    /// Si un segundo thread/instancia ya insertó el registro, SQL Server devolverá error 2601/2627 y
+    /// respondemos con <c>WasInserted=false</c>.
+    /// </para>
+    /// <para>
+    /// Requiere un índice único sobre <c>Documentos.NameFile</c>. Script separado (fuera de la app):
+    /// <c>CREATE UNIQUE INDEX UX_Documentos_NameFile ON Documentos(NameFile);</c>
+    /// </para>
+    /// </remarks>
     private async Task<IdocInsertResult> TryInsertDocumentCoreAsync(IdocDocument documento, CancellationToken cancellationToken)
     {
         const string insertHeader =
@@ -112,35 +133,16 @@ public sealed class IdocRepository
                 @IndNotificacion, @PaymentIssueTime, @ReferenceDocNumber, @OrderReason, @MontoDetraccion, @PorcentajeDet, @CustomerOrderNumber);
             """;
 
-        const string insertDetail =
-            """
-            INSERT INTO DET_DOCUMENTOS (FacInterno, NumPed, Cod_Material, Descripcion, Cantidad)
-            VALUES (@FacInterno, @NumPed, @CodMaterial, @Descripcion, @Cantidad);
-            """;
-
         var fecha = NormalizeDate(documento.Fecha);
         var fecVen = NormalizeDate(documento.FechaVencimiento);
 
-        await using var connection = new SqlConnection(_connectionString);
+        await using var connection = new SqlConnection(ConnectionString);
         await connection.OpenAsync(cancellationToken);
         await using var tx =
-            (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+            (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
 
         try
         {
-            const string checkExists = "SELECT COUNT(1) FROM Documentos WHERE NameFile = @NameFile;";
-            await using (var checkCmd = new SqlCommand(checkExists, connection, tx))
-            {
-                checkCmd.Parameters.Add("@NameFile", SqlDbType.NVarChar, 512).Value = documento.ArchivoTibco;
-                var countObj = await checkCmd.ExecuteScalarAsync(cancellationToken);
-                var count = countObj is int i ? i : Convert.ToInt32(countObj, CultureInfo.InvariantCulture);
-                if (count > 0)
-                {
-                    await tx.RollbackAsync(cancellationToken);
-                    return new IdocInsertResult(WasInserted: false, RowsAffected: 0);
-                }
-            }
-
             await using (var cmd = new SqlCommand(insertHeader, connection, tx))
             {
                 cmd.Parameters.Add("@NameFile", SqlDbType.NVarChar, 512).Value = documento.ArchivoTibco;
@@ -175,23 +177,17 @@ public sealed class IdocRepository
                 await cmd.ExecuteNonQueryAsync(cancellationToken);
             }
 
-            var rows = 1;
-            foreach (var item in documento.Detalle)
-            {
-                var codMaterial = IdocDetailNormalizer.NormalizePartNumber(item.PartNumber);
-                var cantidad = IdocDetailNormalizer.NormalizeCantidad(item.Cantidad);
-
-                await using var cmd = new SqlCommand(insertDetail, connection, tx);
-                cmd.Parameters.Add("@FacInterno", SqlDbType.NVarChar, 64).Value = documento.DocumentoSap;
-                cmd.Parameters.Add("@NumPed", SqlDbType.NVarChar, 64).Value = documento.Pedido;
-                cmd.Parameters.Add("@CodMaterial", SqlDbType.NVarChar, 64).Value = codMaterial;
-                cmd.Parameters.Add("@Descripcion", SqlDbType.NVarChar, 512).Value = item.Descripcion;
-                cmd.Parameters.Add("@Cantidad", SqlDbType.NVarChar, 64).Value = cantidad;
-                rows += await cmd.ExecuteNonQueryAsync(cancellationToken);
-            }
-
+            var detailRows = await InsertDetailsBatchedAsync(connection, tx, documento, cancellationToken);
             await tx.CommitAsync(cancellationToken);
-            return new IdocInsertResult(WasInserted: true, RowsAffected: rows);
+            return new IdocInsertResult(WasInserted: true, RowsAffected: 1 + detailRows);
+        }
+        catch (SqlException sqlEx) when (IsDuplicateKeyError(sqlEx))
+        {
+            await tx.RollbackAsync(cancellationToken);
+            _logger.LogInformation(
+                "IDOC: {File} ya existe (duplicate key detectado). Saltando.",
+                documento.ArchivoTibco);
+            return new IdocInsertResult(WasInserted: false, RowsAffected: 0);
         }
         catch (Exception ex)
         {
@@ -199,6 +195,76 @@ public sealed class IdocRepository
             _logger.LogError(ex, "Error insertando documento {File}", documento.ArchivoTibco);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Inserta los detalles en tandas de <see cref="DetailBatchSize"/> filas por comando,
+    /// reduciendo <c>N</c> round-trips a aproximadamente <c>N/DetailBatchSize</c>.
+    /// Alternativa a un Table-Valued Parameter (TVP), que sería más eficiente pero requiere
+    /// crear un <c>User-Defined Table Type</c> en la base (script DBA, fuera de la app).
+    /// </summary>
+    private const int DetailBatchSize = 50;
+
+    private static async Task<int> InsertDetailsBatchedAsync(
+        SqlConnection connection,
+        SqlTransaction tx,
+        IdocDocument documento,
+        CancellationToken cancellationToken)
+    {
+        var detalle = documento.Detalle;
+        if (detalle is null || detalle.Count == 0)
+        {
+            return 0;
+        }
+
+        var totalRows = 0;
+        for (var offset = 0; offset < detalle.Count; offset += DetailBatchSize)
+        {
+            var count = Math.Min(DetailBatchSize, detalle.Count - offset);
+            var sql = new StringBuilder(
+                "INSERT INTO DET_DOCUMENTOS (FacInterno, NumPed, Cod_Material, Descripcion, Cantidad) VALUES ");
+
+            await using var cmd = new SqlCommand { Connection = connection, Transaction = tx };
+
+            cmd.Parameters.Add("@FacInterno", SqlDbType.NVarChar, 64).Value = documento.DocumentoSap;
+            cmd.Parameters.Add("@NumPed", SqlDbType.NVarChar, 64).Value = documento.Pedido;
+
+            for (var i = 0; i < count; i++)
+            {
+                var item = detalle[offset + i];
+                if (i > 0)
+                {
+                    sql.Append(',');
+                }
+
+                sql.Append("(@FacInterno,@NumPed,@m").Append(i).Append(",@d").Append(i).Append(",@q").Append(i).Append(')');
+
+                cmd.Parameters.Add("@m" + i, SqlDbType.NVarChar, 64).Value =
+                    IdocDetailNormalizer.NormalizePartNumber(item.PartNumber);
+                cmd.Parameters.Add("@d" + i, SqlDbType.NVarChar, 512).Value = item.Descripcion ?? string.Empty;
+                cmd.Parameters.Add("@q" + i, SqlDbType.NVarChar, 64).Value =
+                    IdocDetailNormalizer.NormalizeCantidad(item.Cantidad);
+            }
+
+            sql.Append(';');
+            cmd.CommandText = sql.ToString();
+            totalRows += await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        return totalRows;
+    }
+
+    private static bool IsDuplicateKeyError(SqlException ex)
+    {
+        foreach (SqlError error in ex.Errors)
+        {
+            if (DuplicateKeyErrorNumbers.Contains(error.Number))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string NormalizeDate(string? value) =>

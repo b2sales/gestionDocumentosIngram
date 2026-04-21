@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Xml;
 
 namespace GestionDocumentos.Idoc;
@@ -9,54 +10,99 @@ public static class IdocXmlParser
         var tibcoXmlDoc = new XmlDocument();
         tibcoXmlDoc.LoadXml(xmlContent);
 
-        static string GetHeaderValue(XmlDocument doc, string exactTagName) =>
-            doc.OuterXml.Contains($"<{exactTagName}>", StringComparison.Ordinal)
-                ? doc.GetElementsByTagName(exactTagName)[0]?.InnerText ?? ""
-                : "";
-
-        var tipoDoc = GetHeaderValue(tibcoXmlDoc, "ns0:documentType");
+        var tipoDoc = GetTagValue(tibcoXmlDoc, "ns0:documentType");
         var documento = new IdocDocument
         {
             TipoDoc = tipoDoc,
-            Serie = GetHeaderValue(tibcoXmlDoc, "ns0:docNumber"),
-            Numero = GetHeaderValue(tibcoXmlDoc, "ns0:sequentilaNumber"),
-            Fecha = GetHeaderValue(tibcoXmlDoc, "ns0:invoiceDate"),
-            CodSapCliente = GetHeaderValue(tibcoXmlDoc, "ns0:billToNumber"),
-            RucCliente = GetHeaderValue(tibcoXmlDoc, "ns0:customerTVAT"),
-            NomCliente = GetHeaderValue(tibcoXmlDoc, "ns0:billToName"),
-            Moneda = GetHeaderValue(tibcoXmlDoc, "ns0:currencyCode"),
-            Monto = GetHeaderValue(tibcoXmlDoc, "ns0:totalTaxValue"),
-            DocumentoSap = GetHeaderValue(tibcoXmlDoc, "ns0:SAPBillingDocumentNumber"),
-            FechaVencimiento = GetHeaderValue(tibcoXmlDoc, "ns0:paymentDueDate"),
-            PaymentMethod = GetHeaderValue(tibcoXmlDoc, "ns0:paymentMethod"),
-            Contacto = GetHeaderValue(tibcoXmlDoc, "ns0:soldToEmailId"),
-            Pedido = GetHeaderValue(tibcoXmlDoc, "ns0:orderNumber"),
-            PaymentIssueTime = GetHeaderValue(tibcoXmlDoc, "ns0:paymentIssueTime"),
-            CodVen = GetHeaderValue(tibcoXmlDoc, "ns0:salesMan"),
-            OrderReason = GetHeaderValue(tibcoXmlDoc, "ns0:salesOrderReason"),
-            CustomerOrderNumber = GetHeaderValue(tibcoXmlDoc, "ns0:customerOrderNumber")
+            Serie = GetTagValue(tibcoXmlDoc, "ns0:docNumber"),
+            Numero = GetTagValue(tibcoXmlDoc, "ns0:sequentilaNumber"),
+            Fecha = GetTagValue(tibcoXmlDoc, "ns0:invoiceDate"),
+            CodSapCliente = GetTagValue(tibcoXmlDoc, "ns0:billToNumber"),
+            RucCliente = GetTagValue(tibcoXmlDoc, "ns0:customerTVAT"),
+            NomCliente = GetTagValue(tibcoXmlDoc, "ns0:billToName"),
+            Moneda = GetTagValue(tibcoXmlDoc, "ns0:currencyCode"),
+            Monto = GetTagValue(tibcoXmlDoc, "ns0:totalTaxValue"),
+            DocumentoSap = GetTagValue(tibcoXmlDoc, "ns0:SAPBillingDocumentNumber"),
+            FechaVencimiento = GetTagValue(tibcoXmlDoc, "ns0:paymentDueDate"),
+            PaymentMethod = GetTagValue(tibcoXmlDoc, "ns0:paymentMethod"),
+            Contacto = GetTagValue(tibcoXmlDoc, "ns0:soldToEmailId"),
+            Pedido = GetTagValue(tibcoXmlDoc, "ns0:orderNumber"),
+            PaymentIssueTime = GetTagValue(tibcoXmlDoc, "ns0:paymentIssueTime"),
+            CodVen = GetTagValue(tibcoXmlDoc, "ns0:salesMan"),
+            OrderReason = GetTagValue(tibcoXmlDoc, "ns0:salesOrderReason"),
+            CustomerOrderNumber = GetTagValue(tibcoXmlDoc, "ns0:customerOrderNumber")
         };
 
-        documento.MontoDetraccion = decimal.Parse(GetHeaderValue(tibcoXmlDoc, "ns0:MontoDetraccion") is { Length: > 0 } md ? md : "0.00");
-        documento.PorcentajeDet = decimal.Parse(GetHeaderValue(tibcoXmlDoc, "ns0:PorcentajeDet") is { Length: > 0 } pd ? pd : "0.00");
+        documento.MontoDetraccion = TryParseDecimal(GetTagValue(tibcoXmlDoc, "ns0:MontoDetraccion"));
+        documento.PorcentajeDet = TryParseDecimal(GetTagValue(tibcoXmlDoc, "ns0:PorcentajeDet"));
 
         if (tipoDoc is "07" or "08")
         {
-            documento.ReferenceDocNumber = GetHeaderValue(tibcoXmlDoc, "ns0:referenceDocNumber");
+            documento.ReferenceDocNumber = GetTagValue(tibcoXmlDoc, "ns0:referenceDocNumber");
         }
 
         var lineas = tibcoXmlDoc.GetElementsByTagName("ns0:stocKLine");
         foreach (XmlNode line in lineas)
         {
-            var det = new IdocLineDetail
+            if (line is not XmlElement elem)
             {
-                PartNumber = line["ns0:partNumber"]!.InnerText,
-                Descripcion = line["ns0:itemDescription"]!.InnerText,
-                Cantidad = line["ns0:quantity"]!.InnerText
-            };
-            documento.Detalle.Add(det);
+                continue;
+            }
+
+            documento.Detalle.Add(new IdocLineDetail
+            {
+                PartNumber = GetChildText(elem, "ns0:partNumber"),
+                Descripcion = GetChildText(elem, "ns0:itemDescription"),
+                Cantidad = GetChildText(elem, "ns0:quantity")
+            });
         }
 
         return documento;
+    }
+
+    private static string GetTagValue(XmlDocument doc, string exactTagName)
+    {
+        var nodes = doc.GetElementsByTagName(exactTagName);
+        if (nodes.Count == 0)
+        {
+            return "";
+        }
+
+        return nodes[0]?.InnerText ?? "";
+    }
+
+    private static string GetChildText(XmlElement parent, string childName) =>
+        parent[childName]?.InnerText ?? "";
+
+    /// <summary>
+    /// Parseo tolerante: los XML de origen pueden venir con coma o punto como separador decimal
+    /// según el locale del productor. Normalizamos a punto e interpretamos con <see cref="CultureInfo.InvariantCulture"/>
+    /// para evitar dependencias del locale del host.
+    /// </summary>
+    /// <summary>
+    /// Parseo tolerante: normalizamos el separador decimal a punto cuando la entrada usa coma
+    /// (productor con locale <c>es-*</c>) y parseamos con <see cref="CultureInfo.InvariantCulture"/>
+    /// para no depender del locale del host.
+    /// </summary>
+    private static decimal TryParseDecimal(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return 0m;
+        }
+
+        var trimmed = value.Trim();
+
+        // Si hay una única coma y ningún punto, es separador decimal: normalizar.
+        if (trimmed.IndexOf('.') < 0 &&
+            trimmed.IndexOf(',') >= 0 &&
+            trimmed.IndexOf(',') == trimmed.LastIndexOf(','))
+        {
+            trimmed = trimmed.Replace(',', '.');
+        }
+
+        return decimal.TryParse(trimmed, NumberStyles.Number, CultureInfo.InvariantCulture, out var d)
+            ? d
+            : 0m;
     }
 }

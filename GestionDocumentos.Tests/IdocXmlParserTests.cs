@@ -60,6 +60,68 @@ public sealed class IdocXmlParserTests
     }
 
     [Fact]
+    public void Parse_Tolerates_Missing_Optional_Nodes()
+    {
+        var xml = """
+                  <ns0:root xmlns:ns0="http://example.com/ns">
+                    <ns0:documentType>01</ns0:documentType>
+                    <ns0:docNumber>F002</ns0:docNumber>
+                    <ns0:sequentilaNumber>456</ns0:sequentilaNumber>
+                  </ns0:root>
+                  """;
+
+        var doc = IdocXmlParser.Parse(xml);
+
+        Assert.Equal("01", doc.TipoDoc);
+        Assert.Equal("F002", doc.Serie);
+        Assert.Equal("456", doc.Numero);
+        Assert.Equal("", doc.NomCliente);
+        Assert.Equal(0m, doc.MontoDetraccion);
+        Assert.Equal(0m, doc.PorcentajeDet);
+        Assert.Empty(doc.Detalle);
+    }
+
+    [Fact]
+    public void Parse_Tolerates_Invalid_Numeric_Values()
+    {
+        var xml = """
+                  <ns0:root xmlns:ns0="http://example.com/ns">
+                    <ns0:documentType>01</ns0:documentType>
+                    <ns0:docNumber>F003</ns0:docNumber>
+                    <ns0:sequentilaNumber>1</ns0:sequentilaNumber>
+                    <ns0:MontoDetraccion>abc</ns0:MontoDetraccion>
+                    <ns0:PorcentajeDet></ns0:PorcentajeDet>
+                  </ns0:root>
+                  """;
+
+        var doc = IdocXmlParser.Parse(xml);
+        Assert.Equal(0m, doc.MontoDetraccion);
+        Assert.Equal(0m, doc.PorcentajeDet);
+    }
+
+    [Fact]
+    public void Parse_Tolerates_Missing_Line_Children()
+    {
+        var xml = """
+                  <ns0:root xmlns:ns0="http://example.com/ns">
+                    <ns0:documentType>01</ns0:documentType>
+                    <ns0:docNumber>F004</ns0:docNumber>
+                    <ns0:sequentilaNumber>1</ns0:sequentilaNumber>
+                    <ns0:stocKLine>
+                      <ns0:partNumber>PN-1</ns0:partNumber>
+                    </ns0:stocKLine>
+                  </ns0:root>
+                  """;
+
+        var doc = IdocXmlParser.Parse(xml);
+
+        Assert.Single(doc.Detalle);
+        Assert.Equal("PN-1", doc.Detalle[0].PartNumber);
+        Assert.Equal("", doc.Detalle[0].Descripcion);
+        Assert.Equal("", doc.Detalle[0].Cantidad);
+    }
+
+    [Fact]
     public void Parse_ReferenceDoc_For_Tipo_07()
     {
         var xml = """

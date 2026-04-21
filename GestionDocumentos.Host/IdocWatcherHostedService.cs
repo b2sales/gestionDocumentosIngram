@@ -9,12 +9,17 @@ namespace GestionDocumentos.Host;
 
 public sealed class IdocWatcherHostedService : BackgroundService
 {
+    private static readonly TimeSpan RetryAfterFailure = TimeSpan.FromSeconds(30);
+
+    private const string RegistryName = "IDOC";
+
     private readonly IdocFileProcessor _processor;
     private readonly IOptionsMonitor<IdocOptions> _idocOptions;
     private readonly BackOfficeParameterReader _backOfficeReader;
     private readonly IdocBackOfficePaths _paths;
     private readonly ILogger<IdocWatcherHostedService> _logger;
     private readonly ILogger<FolderWatcherEngine> _watcherLogger;
+    private readonly WatcherStatusRegistry _statusRegistry;
     private FolderWatcherEngine? _engine;
 
     public IdocWatcherHostedService(
@@ -23,7 +28,8 @@ public sealed class IdocWatcherHostedService : BackgroundService
         BackOfficeParameterReader backOfficeReader,
         IdocBackOfficePaths paths,
         ILogger<IdocWatcherHostedService> logger,
-        ILogger<FolderWatcherEngine> watcherLogger)
+        ILogger<FolderWatcherEngine> watcherLogger,
+        WatcherStatusRegistry statusRegistry)
     {
         _processor = processor;
         _idocOptions = idocOptions;
@@ -31,62 +37,91 @@ public sealed class IdocWatcherHostedService : BackgroundService
         _paths = paths;
         _logger = logger;
         _watcherLogger = watcherLogger;
+        _statusRegistry = statusRegistry;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            var resolved = await TryResolveWatchFolderAsync(stoppingToken);
-            if (resolved is not null)
-            {
-                _paths.Apply(
-                    resolved.Value.WatchFolder,
-                    resolved.Value.TibcoRoot,
-                    resolved.Value.ResolvedFromDatabase);
-
-                if (Directory.Exists(_paths.WatchFolder))
-                {
-                    var watcherOptions = BuildWatcherOptions(_idocOptions.CurrentValue, _paths.WatchFolder);
-                    _engine = new FolderWatcherEngine(_processor, watcherOptions, _watcherLogger);
-                    await _engine.StartAsync(stoppingToken);
-                    _logger.LogInformation("IDOC watcher iniciado en {Path}", _paths.WatchFolder);
-                    break;
-                }
-
-                _logger.LogWarning(
-                    "IDOC pipeline pendiente: carpeta no existe: {Path}. Reintentando en 30s.",
-                    _paths.WatchFolder);
-            }
-
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+                await RunOnceAsync(stoppingToken);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 return;
             }
-        }
-
-        if (_engine is null)
-        {
-            return;
-        }
-
-        try
-        {
-            await Task.Delay(Timeout.Infinite, stoppingToken);
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        finally
-        {
-            if (_engine is not null)
+            catch (Exception ex)
             {
-                await _engine.StopAsync(CancellationToken.None);
+                _logger.LogError(
+                    ex,
+                    "IDOC watcher falló; reintentando en {Delay}.",
+                    RetryAfterFailure);
+                await SafeDelayAsync(RetryAfterFailure, stoppingToken);
             }
+        }
+    }
+
+    private async Task RunOnceAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            var resolved = await TryResolveWatchFolderAsync(stoppingToken);
+            if (resolved is null)
+            {
+                await SafeDelayAsync(RetryAfterFailure, stoppingToken);
+                continue;
+            }
+
+            _paths.Apply(
+                resolved.Value.WatchFolder,
+                resolved.Value.TibcoRoot,
+                resolved.Value.ResolvedFromDatabase);
+
+            if (!Directory.Exists(_paths.WatchFolder))
+            {
+                _logger.LogWarning(
+                    "IDOC pipeline pendiente: carpeta no existe: {Path}. Reintentando en {Delay}.",
+                    _paths.WatchFolder,
+                    RetryAfterFailure);
+                await SafeDelayAsync(RetryAfterFailure, stoppingToken);
+                continue;
+            }
+
+            var watcherOptions = BuildWatcherOptions(_idocOptions.CurrentValue, _paths.WatchFolder);
+            var engine = new FolderWatcherEngine(_processor, watcherOptions, _watcherLogger);
+            _engine = engine;
+            _statusRegistry.Register(RegistryName, () => engine.GetSnapshot());
+            try
+            {
+                await engine.StartAsync(stoppingToken);
+                _logger.LogInformation("IDOC watcher iniciado en {Path}", _paths.WatchFolder);
+
+                try
+                {
+                    await Task.Delay(Timeout.Infinite, stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            }
+            finally
+            {
+                _statusRegistry.Unregister(RegistryName);
+                try
+                {
+                    await engine.StopAsync(stoppingToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "IDOC watcher: error deteniendo engine.");
+                }
+
+                _engine = null;
+            }
+
+            return;
         }
     }
 
@@ -100,7 +135,8 @@ public sealed class IdocWatcherHostedService : BackgroundService
             if (string.IsNullOrWhiteSpace(i2Carpeta))
             {
                 _logger.LogWarning(
-                    "IDOC pipeline pendiente: no se pudo resolver IDOC/I2CARPETA desde backOfficeDB. Reintentando en 30s.");
+                    "IDOC pipeline pendiente: no se pudo resolver IDOC/I2CARPETA desde backOfficeDB. Reintentando en {Delay}.",
+                    RetryAfterFailure);
                 return null;
             }
 
@@ -111,7 +147,8 @@ public sealed class IdocWatcherHostedService : BackgroundService
         if (string.IsNullOrWhiteSpace(o.WatchFolder))
         {
             _logger.LogWarning(
-                "IDOC pipeline pendiente: backOfficeContext vacío e idocFolder vacío. Reintentando en 30s.");
+                "IDOC pipeline pendiente: backOfficeContext vacío e idocFolder vacío. Reintentando en {Delay}.",
+                RetryAfterFailure);
             return null;
         }
 
@@ -130,6 +167,19 @@ public sealed class IdocWatcherHostedService : BackgroundService
             FileReadyRetries = options.FileReadyRetries,
             FileReadyDelayMs = options.FileReadyDelayMs,
             RequireExclusiveReadinessLock = true,
-            InternalBufferSize = options.WatcherInternalBufferSize
+            InternalBufferSize = options.WatcherInternalBufferSize,
+            FailedFolder = options.FailedFolder,
+            MaxProcessAttempts = options.MaxProcessAttempts
         };
+
+    private static async Task SafeDelayAsync(TimeSpan delay, CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(delay, token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
 }

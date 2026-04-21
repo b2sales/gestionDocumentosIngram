@@ -52,5 +52,12 @@ public sealed class ConfigureGreOptions : IConfigureOptions<GreOptions>
         {
             options.WatcherInternalBufferSize = Math.Clamp(buf, 4096, 1_048_576);
         }
+
+        options.FailedFolder = Pick("greFailed", "greFailedTest");
+
+        if (int.TryParse(_configuration["maxProcessAttempts"], out var attempts))
+        {
+            options.MaxProcessAttempts = Math.Max(1, attempts);
+        }
     }
 }

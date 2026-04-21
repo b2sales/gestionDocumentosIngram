@@ -26,4 +26,13 @@ public sealed class SmtpErrorEmailOptions
 
     /// <summary>Segundos mínimos entre correos (evita inundar ante muchos errores).</summary>
     public int ThrottleSeconds { get; set; } = 120;
+
+    /// <summary>
+    /// Ventana (segundos) durante la cual se agregan errores posteriores al primero para mandarlos
+    /// en un solo correo-resumen. Si es 0, se envía un correo por item (compatibilidad vieja).
+    /// </summary>
+    public int AggregationWindowSeconds { get; set; } = 60;
+
+    /// <summary>Cantidad máxima de errores agregados por correo-resumen.</summary>
+    public int MaxBatchSize { get; set; } = 50;
 }

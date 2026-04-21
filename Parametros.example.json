@@ -15,7 +15,13 @@
   "fileReadyRetries": "30",
   "fileReadyDelayMs": "1000",
   "watcherInternalBufferSize": "65536",
+  "maxProcessAttempts": "3",
   "environmentTest": "False",
+
+  "greFailed": "\\\\servidor\\carpeta\\failed\\gre",
+  "greFailedTest": "C:\\ruta\\local\\failed\\gre",
+  "idocFailed": "\\\\servidor\\carpeta\\failed\\idoc",
+  "idocFailedTest": "C:\\ruta\\local\\failed\\idoc",
 
   "idocFolder": "",
   "idocFolderTest": "",
@@ -25,6 +31,11 @@
   "backOfficeContextTest": "",
 
   "greContext": "Server=HOST;Database=gre;Integrated Security=true;encrypt=false",
+
+  "Heartbeat": {
+    "Enabled": true,
+    "IntervalMinutes": 15
+  },
 
   "Reconciliation": {
     "Enabled": true,
@@ -43,10 +54,19 @@
     "Port": 587,
     "UserName": "",
     "Password": "",
-    "From": "",
-    "To": "",
+    "From": "GestionDocumentos <gestiondocumentos@empresa.com>",
+    "To": "Soporte TI <soporte@empresa.com>; Operaciones <operaciones@empresa.com>",
     "UseTls": true,
     "SubjectPrefix": "[GestionDocumentos] Error",
-    "ThrottleSeconds": 120
+    "ThrottleSeconds": 120,
+    "AggregationWindowSeconds": 60,
+    "MaxBatchSize": 50
+  },
+
+  "ErrorFileLog": {
+    "Enabled": true,
+    "FolderPath": "C:\\Servicios\\GestionDocumentos\\logs",
+    "FileNamePrefix": "errors",
+    "RetentionDays": 30
   }
 }

@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace GestionDocumentos.Idoc;
 
@@ -9,18 +10,21 @@ namespace GestionDocumentos.Idoc;
 /// </summary>
 public sealed class BackOfficeParameterReader
 {
-    private readonly string _connectionString;
+    private readonly IOptionsMonitor<IdocOptions> _options;
     private readonly ILogger<BackOfficeParameterReader> _logger;
 
-    public BackOfficeParameterReader(string connectionString, ILogger<BackOfficeParameterReader> logger)
+    public BackOfficeParameterReader(
+        IOptionsMonitor<IdocOptions> options,
+        ILogger<BackOfficeParameterReader> logger)
     {
-        _connectionString = connectionString;
+        _options = options;
         _logger = logger;
     }
 
     public async Task<string?> GetValorAsync(string tabla, string parametro, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(_connectionString))
+        var connectionString = _options.CurrentValue.BackOfficeConnectionString;
+        if (string.IsNullOrWhiteSpace(connectionString))
         {
             return null;
         }
@@ -30,7 +34,7 @@ public sealed class BackOfficeParameterReader
 
         try
         {
-            await using var connection = new SqlConnection(_connectionString);
+            await using var connection = new SqlConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
             await using var cmd = new SqlCommand(sql, connection);
             cmd.CommandTimeout = 15;

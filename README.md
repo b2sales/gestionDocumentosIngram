@@ -13,18 +13,20 @@ Servicio Windows que unifica el procesamiento de documentos `GRE` e `IDOC`.
 
 En producción, cuando el proceso corre como servicio Windows:
 
-- el logging global queda filtrado a `Warning` o superior
+- `Microsoft` / `System` quedan filtrados a `Warning` o superior
+- el código propio `GestionDocumentos*` queda visible desde `Information`
 - el proveedor de Windows Event Log queda configurado explícitamente
 - `SourceName`: `GestionDocumentos`
 - `LogName`: `Application`
+- opcionalmente se puede registrar además un archivo local de errores mediante `ErrorFileLog`
 
-Esto significa que en `Event Viewer` se registran:
+Esto significa que en `Event Viewer` se registran principalmente:
 
 - `Warning`
 - `Error`
 - `Critical`
 
-No se registran eventos `Information` ni `Debug` en producción.
+El ruido del framework queda reducido, pero los logs propios pueden seguir saliendo en `Information` a los providers que lo acepten.
 
 ## Dónde revisar errores
 
@@ -35,6 +37,26 @@ En Windows, abrir:
 3. `Application`
 
 Buscar eventos con origen `GestionDocumentos`.
+
+## Archivo de errores
+
+Además del `Windows Event Log`, el servicio puede escribir errores en archivos rotados por día.
+
+- Se configura en la sección `ErrorFileLog` de `Parametros.json`
+- Solo persiste eventos `Error` y `Critical`
+- El archivo diario queda como `{FileNamePrefix}-yyyy-MM-dd.log`
+- `RetentionDays` elimina automáticamente logs más antiguos que la retención configurada
+
+Ejemplo:
+
+```json
+"ErrorFileLog": {
+  "Enabled": true,
+  "FolderPath": "C:\\Servicios\\GestionDocumentos\\logs",
+  "FileNamePrefix": "errors",
+  "RetentionDays": 30
+}
+```
 
 ## Conciliación
 
@@ -48,12 +70,38 @@ Configuración relevante en `Parametros.json`:
 - `Reconciliation.MaxFilesPerSource`
 - `Reconciliation.SkipAlreadyInDatabase`
 
+## Cuarentena de archivos (DLQ)
+
+Cuando un archivo falla `maxProcessAttempts` veces (default: `3`), se mueve a la carpeta configurada en `greFailed` / `greFailedTest` o `idocFailed` / `idocFailedTest`, bajo una subcarpeta `yyyy-MM-dd/`. Junto al archivo se escribe un `.log` con el stacktrace. Si la clave de carpeta está vacía, la cuarentena queda desactivada y el archivo se deja en origen.
+
+Parámetros relevantes en `Parametros.json`:
+
+- `greFailed`, `greFailedTest`, `idocFailed`, `idocFailedTest`
+- `maxProcessAttempts` (global; min `1`)
+
+## Índices únicos recomendados (DBA, fuera de la app)
+
+Por regla de solución la app no ejecuta DDL. Los siguientes índices son necesarios para que los reintentos tras carrera sean idempotentes (el servicio detecta SQL errors `2601`/`2627` y responde con "ya existe"):
+
+```sql
+-- IDOC: previene doble inserción del mismo archivo Tibco.
+CREATE UNIQUE INDEX UX_Documentos_NameFile ON Documentos(NameFile);
+
+-- GRE: previene doble inserción de la misma guía activa
+-- (se filtra por Auditoria_Deleted = 0 para permitir anular + reinsertar).
+CREATE UNIQUE INDEX UX_GreInfos_greName ON GreInfos(greName)
+    WHERE Auditoria_Deleted = 0;
+```
+
 ## Notificaciones por correo
 
 El envío por SMTP es opcional y complementario.
 
+- El transporte SMTP usa `MailKit` (reemplaza a `System.Net.Mail.SmtpClient`, en mantenimiento por MS)
 - Los correos dependen de la sección `Smtp` en `Parametros.json`
 - El canal obligatorio de observabilidad en producción debe ser el `Windows Event Log`
+- Los errores se agregan en una ventana (`Smtp.AggregationWindowSeconds`, default 60s) hasta un máximo (`Smtp.MaxBatchSize`, default 50) y se envían como un único correo resumen con conteos por categoría y detalle — además del throttle mínimo entre correos (`Smtp.ThrottleSeconds`)
+- La cola interna es acotada y con política `DropOldest`, por lo que un SMTP caído no provoca fuga de memoria
 
 ## Instalación del servicio en Windows
 

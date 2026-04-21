@@ -63,5 +63,14 @@ public sealed class ConfigureIdocOptions : IConfigureOptions<IdocOptions>
         {
             options.WatcherInternalBufferSize = Math.Clamp(buf, 4096, 1_048_576);
         }
+
+        options.FailedFolder = useTest
+            ? _configuration["idocFailedTest"] ?? ""
+            : _configuration["idocFailed"] ?? "";
+
+        if (int.TryParse(_configuration["maxProcessAttempts"], out var attempts))
+        {
+            options.MaxProcessAttempts = Math.Max(1, attempts);
+        }
     }
 }

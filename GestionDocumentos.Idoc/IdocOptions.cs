@@ -20,4 +20,10 @@ public sealed class IdocOptions
 
     /// <summary>Buffer de <see cref="System.IO.FileSystemWatcher"/> (bytes).</summary>
     public int WatcherInternalBufferSize { get; set; } = 65536;
+
+    /// <summary>Carpeta destino para XMLs que fallan repetidamente. Vacía desactiva la cuarentena.</summary>
+    public string FailedFolder { get; set; } = "";
+
+    /// <summary>Intentos antes de mover a cuarentena. Mínimo 1.</summary>
+    public int MaxProcessAttempts { get; set; } = 3;
 }

@@ -13,12 +13,14 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
     private readonly ILogger<FolderWatcherEngine> _logger;
     private readonly Channel<string> _queue;
     private readonly ConcurrentDictionary<string, byte> _pending;
+    private readonly ConcurrentDictionary<string, int> _failureCounts;
     private readonly List<Task> _workers = [];
     private readonly SemaphoreSlim _watcherRecoveryLock = new(1, 1);
     private FileSystemWatcher? _watcher;
     private CancellationToken _runCancellationToken;
     private volatile bool _stopping;
     private int _recoveryInProgress;
+    private long _lastProcessedTicksUtc;
 
     public FolderWatcherEngine(IFileProcessor processor, WatcherOptions options, ILogger<FolderWatcherEngine> logger)
     {
@@ -26,6 +28,7 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
         _options = options;
         _logger = logger;
         _pending = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        _failureCounts = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         _queue = Channel.CreateBounded<string>(new BoundedChannelOptions(options.QueueCapacity)
         {
             FullMode = BoundedChannelFullMode.Wait,
@@ -61,7 +64,16 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
         _queue.Writer.TryComplete();
         if (_workers.Count > 0)
         {
-            await Task.WhenAll(_workers).WaitAsync(cancellationToken);
+            try
+            {
+                await Task.WhenAll(_workers).WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning(
+                    "FolderWatcherEngine: timeout/cancelación esperando workers en StopAsync para {Path}.",
+                    _options.Path);
+            }
         }
     }
 
@@ -73,7 +85,7 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
             return;
         }
 
-        _ = RecoverWatcherAsync();
+        SafeFireAndForget(RecoverWatcherAsync, nameof(RecoverWatcherAsync));
     }
 
     private void WatcherOnEvent(object? sender, FileSystemEventArgs e)
@@ -88,7 +100,31 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
             return;
         }
 
-        _ = EnqueuePathAsync(e.FullPath);
+        var fullPath = e.FullPath;
+        SafeFireAndForget(() => EnqueuePathAsync(fullPath), nameof(EnqueuePathAsync));
+    }
+
+    /// <summary>
+    /// Ejecuta una Task en segundo plano garantizando que ninguna excepción llegue al
+    /// <see cref="TaskScheduler.UnobservedTaskException"/> (que podría matar el proceso según
+    /// configuración). Todas las excepciones se loggean y se absorben.
+    /// </summary>
+    private void SafeFireAndForget(Func<Task> taskFactory, string operationName)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await taskFactory();
+            }
+            catch (OperationCanceledException) when (_stopping || _runCancellationToken.IsCancellationRequested)
+            {
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Fire-and-forget falló en {Operation} (watcher {Path})", operationName, _options.Path);
+            }
+        });
     }
 
     private async Task EnqueuePathAsync(string fullPath)
@@ -100,7 +136,15 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
 
         try
         {
-            await _queue.Writer.WriteAsync(fullPath);
+            await _queue.Writer.WriteAsync(fullPath, _runCancellationToken);
+        }
+        catch (OperationCanceledException) when (_runCancellationToken.IsCancellationRequested || _stopping)
+        {
+            _pending.TryRemove(fullPath, out _);
+        }
+        catch (ChannelClosedException)
+        {
+            _pending.TryRemove(fullPath, out _);
         }
         catch (Exception ex)
         {
@@ -111,31 +155,137 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
 
     private async Task ConsumeLoopAsync(CancellationToken cancellationToken)
     {
-        while (await _queue.Reader.WaitToReadAsync(cancellationToken))
+        try
         {
-            while (_queue.Reader.TryRead(out var fullPath))
+            while (await _queue.Reader.WaitToReadAsync(cancellationToken))
             {
-                try
+                while (_queue.Reader.TryRead(out var fullPath))
                 {
-                    if (await WaitUntilReadyAsync(fullPath, cancellationToken))
+                    var success = false;
+                    try
                     {
-                        await _processor.ProcessAsync(fullPath, cancellationToken);
+                        if (await WaitUntilReadyAsync(fullPath, cancellationToken))
+                        {
+                            await _processor.ProcessAsync(fullPath, cancellationToken);
+                            success = true;
+                            Interlocked.Exchange(ref _lastProcessedTicksUtc, DateTime.UtcNow.Ticks);
+                        }
+                        else
+                        {
+                            _logger.LogWarning(
+                                "Archivo no disponible tras {Retries} reintentos ({DelayMs}ms): {Path}",
+                                _options.FileReadyRetries,
+                                _options.FileReadyDelayMs,
+                                fullPath);
+                        }
                     }
-                    else
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {
-                        _logger.LogWarning(
-                            "Archivo no disponible tras {Retries} reintentos ({DelayMs}ms): {Path}",
-                            _options.FileReadyRetries,
-                            _options.FileReadyDelayMs,
-                            fullPath);
+                        _pending.TryRemove(fullPath, out _);
+                        return;
                     }
-                }
-                finally
-                {
-                    _pending.TryRemove(fullPath, out _);
+                    catch (Exception ex)
+                    {
+                        HandleProcessingFailure(fullPath, ex);
+                    }
+                    finally
+                    {
+                        _pending.TryRemove(fullPath, out _);
+                        if (success)
+                        {
+                            _failureCounts.TryRemove(fullPath, out _);
+                        }
+                    }
                 }
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.LogCritical(ex, "FolderWatcherEngine: worker loop terminó por excepción inesperada en {Path}.", _options.Path);
+        }
+    }
+
+    private void HandleProcessingFailure(string fullPath, Exception ex)
+    {
+        var maxAttempts = Math.Max(1, _options.MaxProcessAttempts);
+        var attempts = _failureCounts.AddOrUpdate(fullPath, 1, (_, prev) => prev + 1);
+
+        if (attempts >= maxAttempts)
+        {
+            _logger.LogError(
+                ex,
+                "Archivo falló {Attempts}/{Max} veces: {Path}. Moviendo a cuarentena.",
+                attempts,
+                maxAttempts,
+                fullPath);
+            TryQuarantine(fullPath, ex);
+            _failureCounts.TryRemove(fullPath, out _);
+        }
+        else
+        {
+            _logger.LogWarning(
+                ex,
+                "Archivo falló {Attempts}/{Max}; se reintentará en próximo evento: {Path}",
+                attempts,
+                maxAttempts,
+                fullPath);
+        }
+    }
+
+    private void TryQuarantine(string sourcePath, Exception ex)
+    {
+        if (string.IsNullOrWhiteSpace(_options.FailedFolder))
+        {
+            return;
+        }
+
+        try
+        {
+            var dayFolder = Path.Combine(_options.FailedFolder, DateTime.Now.ToString("yyyy-MM-dd"));
+            Directory.CreateDirectory(dayFolder);
+
+            var baseName = Path.GetFileName(sourcePath);
+            if (string.IsNullOrEmpty(baseName))
+            {
+                return;
+            }
+
+            var destPath = BuildUniquePath(Path.Combine(dayFolder, baseName));
+            if (File.Exists(sourcePath))
+            {
+                File.Move(sourcePath, destPath);
+            }
+
+            var logPath = destPath + ".log";
+            File.WriteAllText(
+                logPath,
+                $"Fecha: {DateTime.Now:O}\r\nArchivo origen: {sourcePath}\r\n\r\n--- Excepción ---\r\n{ex}\r\n");
+        }
+        catch (Exception moveEx)
+        {
+            _logger.LogError(
+                moveEx,
+                "No se pudo mover a cuarentena {Source} → {FailedFolder}. El archivo queda en origen.",
+                sourcePath,
+                _options.FailedFolder);
+        }
+    }
+
+    private static string BuildUniquePath(string desired)
+    {
+        if (!File.Exists(desired))
+        {
+            return desired;
+        }
+
+        var dir = Path.GetDirectoryName(desired) ?? "";
+        var name = Path.GetFileNameWithoutExtension(desired);
+        var ext = Path.GetExtension(desired);
+        var stamp = DateTime.Now.ToString("HHmmssfff");
+        return Path.Combine(dir, $"{name}.{stamp}{ext}");
     }
 
     private async Task<bool> WaitUntilReadyAsync(string fullPath, CancellationToken cancellationToken)
@@ -202,7 +352,16 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
 
     private async Task RecoverWatcherAsync()
     {
-        await _watcherRecoveryLock.WaitAsync();
+        try
+        {
+            await _watcherRecoveryLock.WaitAsync(_runCancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            Interlocked.Exchange(ref _recoveryInProgress, 0);
+            return;
+        }
+
         try
         {
             var attempt = 0;
@@ -240,14 +399,20 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
                         attempt);
                 }
 
-                await Task.Delay(TimeSpan.FromSeconds(30), _runCancellationToken);
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(30), _runCancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
             }
-        }
-        catch (OperationCanceledException)
-        {
         }
         finally
         {
+            // CRÍTICO: siempre reseteamos, aunque la recuperación fallara catastróficamente,
+            // para que un siguiente Error event pueda disparar una nueva recuperación.
             Interlocked.Exchange(ref _recoveryInProgress, 0);
             _watcherRecoveryLock.Release();
         }
@@ -256,13 +421,70 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
     private async Task<int> EnqueueExistingFilesAsync()
     {
         var count = 0;
+        var skippedOld = 0;
+        var skippedByLimit = 0;
+        var maxFiles = _options.RescanMaxFiles;
+        var maxAge = _options.RescanMaxAge;
+        var ageCutoffUtc = maxAge > TimeSpan.Zero ? DateTime.UtcNow - maxAge : (DateTime?)null;
+
         foreach (var path in Directory.EnumerateFiles(_options.Path, _options.Filter, SearchOption.TopDirectoryOnly))
         {
+            if (maxFiles > 0 && count >= maxFiles)
+            {
+                skippedByLimit++;
+                continue;
+            }
+
+            if (ageCutoffUtc is { } cutoff)
+            {
+                try
+                {
+                    var last = File.GetLastWriteTimeUtc(path);
+                    if (last < cutoff)
+                    {
+                        skippedOld++;
+                        continue;
+                    }
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+            }
+
             count++;
             await EnqueuePathAsync(path);
         }
 
+        if (skippedOld > 0 || skippedByLimit > 0)
+        {
+            _logger.LogWarning(
+                "Reescaneo en {Path}: encolados {Count}, descartados {Old} por antigüedad (>{Age}), {Limit} por tope {Max}.",
+                _options.Path,
+                count,
+                skippedOld,
+                maxAge,
+                skippedByLimit,
+                maxFiles);
+        }
+
         return count;
+    }
+
+    public WatcherSnapshot GetSnapshot()
+    {
+        var ticks = Interlocked.Read(ref _lastProcessedTicksUtc);
+        DateTimeOffset? lastProcessed = ticks > 0
+            ? new DateTimeOffset(new DateTime(ticks, DateTimeKind.Utc))
+            : null;
+
+        return new WatcherSnapshot(
+            IsActive: !_stopping && _watcher is { EnableRaisingEvents: true },
+            PendingCount: _pending.Count,
+            LastProcessedAtUtc: lastProcessed,
+            Path: _options.Path);
     }
 
     public async ValueTask DisposeAsync()

@@ -141,8 +141,10 @@ public sealed class RealExampleFilesTests
     }
 
     [Fact]
-    public void Idoc_XmlParser_Invalid_MontoDetraccion_Throws_Like_Legacy()
+    public void Idoc_XmlParser_Invalid_MontoDetraccion_Returns_Zero()
     {
+        // Fase 2 (parseo defensivo): valores numéricos inválidos ya no lanzan FormatException
+        // (comportamiento legacy); se normalizan a 0m para que el archivo no corrompa el pipeline.
         const string xml =
             """
             <ns0:root xmlns:ns0="urn:test">
@@ -154,6 +156,8 @@ public sealed class RealExampleFilesTests
             </ns0:root>
             """;
 
-        Assert.Throws<FormatException>(() => IdocXmlParser.Parse(xml));
+        var doc = IdocXmlParser.Parse(xml);
+        Assert.Equal(0m, doc.MontoDetraccion);
+        Assert.Equal(0m, doc.PorcentajeDet);
     }
 }

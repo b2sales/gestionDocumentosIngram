@@ -13,6 +13,8 @@ namespace GestionDocumentos.Host;
 /// </summary>
 public sealed class DailyReconciliationHostedService : BackgroundService
 {
+    private int _running;
+
     private readonly GreFileProcessor _greProcessor;
     private readonly IdocFileProcessor _idocProcessor;
     private readonly GreReconciliationLookup _greReconciliationLookup;
@@ -52,46 +54,9 @@ public sealed class DailyReconciliationHostedService : BackgroundService
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            var opts = _reconcileOptions.CurrentValue;
-            if (!opts.Enabled)
-            {
-                await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
-                continue;
-            }
-
-            if (!TryParseLocalTime(opts.DailyTimeLocal, out var timeOfDay))
-            {
-                _logger.LogError(
-                    "Conciliación: hora inválida en DailyTimeLocal '{Value}'. Use HH:mm (24 h).",
-                    opts.DailyTimeLocal);
-                await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
-                continue;
-            }
-
-            var nextLocal = GetNextLocalRunTime(timeOfDay);
-            var delay = nextLocal - DateTime.Now;
-            if (delay < TimeSpan.Zero)
-            {
-                delay = TimeSpan.Zero;
-            }
-
-            _logger.LogInformation(
-                "Conciliación diaria programada para {NextLocal:yyyy-MM-dd HH:mm} (hora local), en {Delay}",
-                nextLocal,
-                delay);
-
             try
             {
-                await Task.Delay(delay, stoppingToken);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-
-            try
-            {
-                await RunReconciliationAsync(stoppingToken);
+                await ScheduleAndRunAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -99,16 +64,81 @@ public sealed class DailyReconciliationHostedService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Conciliación diaria falló. El servicio seguirá activo y reintentará en el próximo ciclo.");
-                try
-                {
-                    await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    return;
-                }
+                _logger.LogError(
+                    ex,
+                    "Conciliación diaria: error inesperado en el bucle principal. Reintentando en 1 minuto.");
+                await SafeDelayAsync(TimeSpan.FromMinutes(1), stoppingToken);
             }
+        }
+    }
+
+    private async Task ScheduleAndRunAsync(CancellationToken stoppingToken)
+    {
+        var opts = _reconcileOptions.CurrentValue;
+        if (!opts.Enabled)
+        {
+            await SafeDelayAsync(TimeSpan.FromMinutes(5), stoppingToken);
+            return;
+        }
+
+        if (!TryParseLocalTime(opts.DailyTimeLocal, out var timeOfDay))
+        {
+            _logger.LogError(
+                "Conciliación: hora inválida en DailyTimeLocal '{Value}'. Use HH:mm (24 h).",
+                opts.DailyTimeLocal);
+            await SafeDelayAsync(TimeSpan.FromHours(1), stoppingToken);
+            return;
+        }
+
+        var nextLocal = GetNextLocalRunTime(timeOfDay);
+        var delay = nextLocal - DateTimeOffset.Now;
+        if (delay < TimeSpan.Zero)
+        {
+            delay = TimeSpan.Zero;
+        }
+
+        _logger.LogInformation(
+            "Conciliación diaria programada para {NextLocal:yyyy-MM-dd HH:mm zzz} (hora local), en {Delay}",
+            nextLocal,
+            delay);
+
+        await Task.Delay(delay, stoppingToken);
+
+        // Lock de instancia: si la ejecución previa aún no terminó (p. ej. corrida manual + schedule),
+        // saltamos esta corrida sin esperar y reprogramamos normalmente.
+        if (Interlocked.CompareExchange(ref _running, 1, 0) == 1)
+        {
+            _logger.LogWarning("Conciliación: ya hay una ejecución en curso. Se omite esta corrida.");
+            return;
+        }
+
+        try
+        {
+            await RunReconciliationAsync(stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Conciliación diaria falló. El servicio seguirá activo y reintentará en el próximo ciclo.");
+            await SafeDelayAsync(TimeSpan.FromMinutes(1), stoppingToken);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _running, 0);
+        }
+    }
+
+    private static async Task SafeDelayAsync(TimeSpan delay, CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(delay, token);
+        }
+        catch (OperationCanceledException)
+        {
         }
     }
 
@@ -235,13 +265,29 @@ public sealed class DailyReconciliationHostedService : BackgroundService
         };
 
         var processed = 0;
+        var failed = 0;
         await Parallel.ForEachAsync(toProcess, parallel, async (path, token) =>
         {
-            await _greProcessor.ProcessAsync(path, token);
-            Interlocked.Increment(ref processed);
+            try
+            {
+                await _greProcessor.ProcessAsync(path, token);
+                Interlocked.Increment(ref processed);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Interlocked.Increment(ref failed);
+                _logger.LogError(ex, "Conciliación GRE: falló procesamiento de {Path}; se continúa con el resto.", path);
+            }
         });
 
-        _logger.LogInformation("Conciliación GRE: invocados {Processed} PDF(s) al procesador.", processed);
+        _logger.LogInformation(
+            "Conciliación GRE: {Processed} PDF(s) procesados, {Failed} fallidos.",
+            processed,
+            failed);
     }
 
     private async Task ReconcileIdocAsync(
@@ -299,13 +345,29 @@ public sealed class DailyReconciliationHostedService : BackgroundService
         };
 
         var processed = 0;
+        var failed = 0;
         await Parallel.ForEachAsync(toProcess, parallel, async (path, token) =>
         {
-            await _idocProcessor.ProcessAsync(path, token);
-            Interlocked.Increment(ref processed);
+            try
+            {
+                await _idocProcessor.ProcessAsync(path, token);
+                Interlocked.Increment(ref processed);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Interlocked.Increment(ref failed);
+                _logger.LogError(ex, "Conciliación IDOC: falló procesamiento de {Path}; se continúa con el resto.", path);
+            }
         });
 
-        _logger.LogInformation("Conciliación IDOC: invocados {Processed} XML(s) al procesador.", processed);
+        _logger.LogInformation(
+            "Conciliación IDOC: {Processed} XML(s) procesados, {Failed} fallidos.",
+            processed,
+            failed);
     }
 
     private async Task<(string? Path, bool ResolvedFromDatabase)> ResolveIdocFolderAsync(
@@ -333,48 +395,63 @@ public sealed class DailyReconciliationHostedService : BackgroundService
     private static string NormalizeWatchPath(string path) =>
         path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-    private bool IsFromToday(string path)
+    /// <summary>
+    /// Enumera archivos en <paramref name="folder"/> usando un único <see cref="FileInfo"/> por archivo.
+    /// <see cref="DirectoryInfo.EnumerateFiles(string,SearchOption)"/> devuelve <see cref="FileInfo"/>
+    /// con metadata ya cacheada por el SO, evitando llamadas adicionales a <c>File.GetLastWriteTime</c>/
+    /// <c>GetCreationTime</c> que son especialmente costosas sobre UNC/SMB.
+    /// </summary>
+    private List<string> GetCandidateFiles(string folder, string pattern, bool onlyToday, int maxFiles)
     {
-        var today = DateTime.Today;
+        DirectoryInfo dir;
         try
         {
-            var write = File.GetLastWriteTime(path);
-            var create = File.GetCreationTime(path);
-            return write.Date == today || create.Date == today;
+            dir = new DirectoryInfo(folder);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "No se pudo determinar si el archivo es de hoy para conciliación: {Path}", path);
-            return false;
+            _logger.LogWarning(ex, "Conciliación: no se pudo abrir carpeta {Path}", folder);
+            return new List<string>();
         }
-    }
 
-    private List<string> GetCandidateFiles(string folder, string pattern, bool onlyToday, int maxFiles)
-    {
-        var selected = Directory
-            .EnumerateFiles(folder, pattern, SearchOption.TopDirectoryOnly)
-            .Select(path => new { Path = path, SortKey = TryGetSortKey(path) })
-            .Where(x => !onlyToday || IsFromToday(x.Path))
+        var today = DateTime.Today;
+        var selected = dir
+            .EnumerateFiles(pattern, SearchOption.TopDirectoryOnly)
+            .Select(fi => new { Info = fi, SortKey = TryGetSortKey(fi) })
+            .Where(x => !onlyToday || IsFromToday(x.Info, today))
             .OrderBy(x => x.SortKey)
             .Take(maxFiles)
-            .Select(x => x.Path)
+            .Select(x => x.Info.FullName)
             .ToList();
 
         return selected;
     }
 
-    private DateTime TryGetSortKey(string path)
+    private bool IsFromToday(FileInfo fi, DateTime today)
     {
         try
         {
-            var write = File.GetLastWriteTime(path);
-            var create = File.GetCreationTime(path);
+            return fi.LastWriteTime.Date == today || fi.CreationTime.Date == today;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "No se pudo determinar si el archivo es de hoy para conciliación: {Path}", fi.FullName);
+            return false;
+        }
+    }
+
+    private DateTime TryGetSortKey(FileInfo fi)
+    {
+        try
+        {
+            var write = fi.LastWriteTime;
+            var create = fi.CreationTime;
             var effective = write <= create ? write : create;
             return effective == DateTime.MinValue ? DateTime.MaxValue : effective;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "No se pudo obtener metadata de fecha para conciliación: {Path}", path);
+            _logger.LogWarning(ex, "No se pudo obtener metadata de fecha para conciliación: {Path}", fi.FullName);
             return DateTime.MaxValue;
         }
     }
@@ -408,10 +485,15 @@ public sealed class DailyReconciliationHostedService : BackgroundService
         return true;
     }
 
-    private static DateTime GetNextLocalRunTime(TimeSpan timeOfDay)
+    /// <summary>
+    /// Devuelve el próximo <see cref="DateTimeOffset"/> local a <paramref name="timeOfDay"/>.
+    /// Usamos <see cref="DateTimeOffset"/> para que los saltos de DST (horario de verano) no
+    /// provoquen corridas duplicadas o perdidas respecto a la versión basada en <see cref="DateTime"/>.
+    /// </summary>
+    private static DateTimeOffset GetNextLocalRunTime(TimeSpan timeOfDay)
     {
-        var now = DateTime.Now;
-        var candidate = now.Date + timeOfDay;
+        var now = DateTimeOffset.Now;
+        var candidate = new DateTimeOffset(now.Year, now.Month, now.Day, timeOfDay.Hours, timeOfDay.Minutes, 0, now.Offset);
         return now <= candidate ? candidate : candidate.AddDays(1);
     }
 }

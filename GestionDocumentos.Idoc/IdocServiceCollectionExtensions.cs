@@ -1,6 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace GestionDocumentos.Idoc;
 
@@ -12,19 +10,10 @@ public static class IdocServiceCollectionExtensions
 
         services.AddSingleton<IdocBackOfficePaths>();
 
-        services.AddSingleton(sp =>
-        {
-            var opts = sp.GetRequiredService<IOptions<IdocOptions>>().Value;
-            var logger = sp.GetRequiredService<ILogger<BackOfficeParameterReader>>();
-            return new BackOfficeParameterReader(opts.BackOfficeConnectionString, logger);
-        });
-
-        services.AddSingleton(sp =>
-        {
-            var opts = sp.GetRequiredService<IOptions<IdocOptions>>().Value;
-            var logger = sp.GetRequiredService<ILogger<IdocRepository>>();
-            return new IdocRepository(opts.ConnectionString, logger);
-        });
+        // Registros con IOptionsMonitor para que cambios de Parametros.json (connection strings)
+        // se tomen en cada operación sin reiniciar el servicio.
+        services.AddSingleton<BackOfficeParameterReader>();
+        services.AddSingleton<IdocRepository>();
 
         services.AddSingleton<IdocFileProcessor>();
         return services;

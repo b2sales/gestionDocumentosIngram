@@ -1,3 +1,5 @@
+using System.Globalization;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -8,12 +10,12 @@ namespace GestionDocumentos.Gre;
 public sealed class GreFileProcessor : IFileProcessor
 {
     private readonly IDbContextFactory<GreDbContext> _dbFactory;
-    private readonly IOptions<GreOptions> _options;
+    private readonly IOptionsMonitor<GreOptions> _options;
     private readonly ILogger<GreFileProcessor> _logger;
 
     public GreFileProcessor(
         IDbContextFactory<GreDbContext> dbFactory,
-        IOptions<GreOptions> options,
+        IOptionsMonitor<GreOptions> options,
         ILogger<GreFileProcessor> logger)
     {
         _dbFactory = dbFactory;
@@ -29,7 +31,7 @@ public sealed class GreFileProcessor : IFileProcessor
             return;
         }
 
-        var o = _options.Value;
+        var o = _options.CurrentValue;
         var guia = "";
         try
         {
@@ -62,6 +64,16 @@ public sealed class GreFileProcessor : IFileProcessor
 
             var serie = data.GetAttributes("Serie");
             var correlativo = data.GetAttributes("Correlativo");
+            if (string.IsNullOrWhiteSpace(serie) || string.IsNullOrWhiteSpace(correlativo))
+            {
+                _logger.LogWarning(
+                    "GRE: Serie o Correlativo ausentes en TXT {Txt} (serie='{Serie}', correlativo='{Correl}').",
+                    txtPath,
+                    serie,
+                    correlativo);
+                return;
+            }
+
             guia = $"GR-0{serie}-{correlativo}";
 
             if (await db.GreInfos.AnyAsync(d => d.greName == guia, cancellationToken))
@@ -110,7 +122,11 @@ public sealed class GreFileProcessor : IFileProcessor
                 row.Auditoria_UpdatedAt = DateTime.Now;
             }
 
-            if (!DateTime.TryParse(fechaInicioTraslado, out var fechaInicio))
+            if (!DateTime.TryParse(
+                    fechaInicioTraslado,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out var fechaInicio))
             {
                 _logger.LogWarning("FechInicioTraslado invalido para {Guia}. Valor: {Fecha}", guia, fechaInicioTraslado);
                 return;
@@ -136,6 +152,11 @@ public sealed class GreFileProcessor : IFileProcessor
                 Auditoria_Deleted = false
             };
 
+            // IMPORTANTE — orden deliberado:
+            //   1) Add(entity)      → stagea el cambio en el contexto (no toca BD).
+            //   2) Copy PDF         → side effect externo; si falla, abortamos ANTES de SaveChanges.
+            //   3) SaveChangesAsync → recién aquí se materializan inserts y updates en BD.
+            // De esta forma la BD nunca queda con metadatos "sin PDF asociado" en disco.
             db.GreInfos.Add(nuevaGre);
 
             var dirKey = "dirPDFs";
@@ -152,14 +173,48 @@ public sealed class GreFileProcessor : IFileProcessor
                 return;
             }
 
-            await db.SaveChangesAsync(cancellationToken);
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException ex) when (IsDuplicateKeyException(ex))
+            {
+                // Carrera detectada: otra instancia/worker ya insertó esta guía.
+                // Requiere índice único filtrado: CREATE UNIQUE INDEX UX_GreInfos_greName
+                //   ON GreInfos(greName) WHERE Auditoria_Deleted = 0;
+                _logger.LogInformation(
+                    "GRE: {Guia} ya existe (duplicate key por carrera). PDF copiado, se salta persistencia.",
+                    guia);
+                return;
+            }
 
             _logger.LogInformation("GRE: {Guia} - Motivo: {Motivo}\t{Err}", guia, motivoTraslado, data.Errors);
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error en guia {Guia}", guia);
+            _logger.LogError(ex, "Error en guia {Guia} (archivo {File})", guia, fileName);
+            throw;
         }
+    }
+
+    private static bool IsDuplicateKeyException(DbUpdateException ex)
+    {
+        if (ex.InnerException is SqlException sqlEx)
+        {
+            foreach (SqlError error in sqlEx.Errors)
+            {
+                if (error.Number is 2601 or 2627)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private async Task<bool> TryCopyPdfAsync(

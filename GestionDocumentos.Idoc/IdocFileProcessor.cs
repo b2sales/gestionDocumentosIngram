@@ -56,9 +56,14 @@ public sealed class IdocFileProcessor : IFileProcessor
                 result.RowsAffected,
                 documento.ArchivoTibco);
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error procesando IDOC {File}", fullPath);
+            throw;
         }
     }
 }

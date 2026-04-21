@@ -26,11 +26,46 @@ public sealed class ErrorEmailQueueProcessorHostedService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await foreach (var item in _queue.Reader.ReadAllAsync(stoppingToken))
+        while (!stoppingToken.IsCancellationRequested)
         {
+            try
+            {
+                await ProcessQueueAsync(stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(
+                    $"[ErrorEmailQueueProcessor] Error inesperado; reintentando en 30s: {ex}");
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+            }
+        }
+    }
+
+    private async Task ProcessQueueAsync(CancellationToken stoppingToken)
+    {
+        var reader = _queue.Reader;
+        while (await reader.WaitToReadAsync(stoppingToken))
+        {
+            if (!reader.TryRead(out var first))
+            {
+                continue;
+            }
+
             var o = _options.CurrentValue;
             if (!o.Enabled)
             {
+                // Drain cola para no hacer que un cambio Enabled=false bloquee consumidores.
                 continue;
             }
 
@@ -42,8 +77,55 @@ public sealed class ErrorEmailQueueProcessorHostedService : BackgroundService
                 continue;
             }
 
-            await _sender.SendAsync(item, stoppingToken);
-            _lastSentUtc = DateTimeOffset.UtcNow;
+            // Agregamos durante AggregationWindowSeconds o hasta MaxBatchSize.
+            var batch = new List<ErrorEmailItem>(capacity: Math.Max(1, o.MaxBatchSize)) { first };
+            var windowSeconds = Math.Max(0, o.AggregationWindowSeconds);
+            var maxBatch = Math.Max(1, o.MaxBatchSize);
+            if (windowSeconds > 0)
+            {
+                var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(windowSeconds);
+                while (batch.Count < maxBatch)
+                {
+                    var remaining = deadline - DateTimeOffset.UtcNow;
+                    if (remaining <= TimeSpan.Zero)
+                    {
+                        break;
+                    }
+
+                    using var windowCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                    windowCts.CancelAfter(remaining);
+                    try
+                    {
+                        if (!await reader.WaitToReadAsync(windowCts.Token))
+                        {
+                            break;
+                        }
+                        while (batch.Count < maxBatch && reader.TryRead(out var next))
+                        {
+                            batch.Add(next);
+                        }
+                    }
+                    catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            try
+            {
+                await _sender.SendBatchAsync(batch, stoppingToken);
+                _lastSentUtc = DateTimeOffset.UtcNow;
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(
+                    $"[ErrorEmailQueueProcessor] Fallo enviando batch de {batch.Count} item(s) (se descartan): {ex}");
+            }
         }
     }
 }
