@@ -1,7 +1,10 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using GestionDocumentos.Gre;
 using GestionDocumentos.Host;
+using GestionDocumentos.Idoc;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace GestionDocumentos.Tests;
 
@@ -136,6 +139,248 @@ public sealed class DailyReconciliationHostedServiceTests : IDisposable
         Assert.True(third);
     }
 
+    [Fact]
+    public async Task ReconcileGreAsync_returns_early_when_gre_folder_is_empty()
+    {
+        var service = CreateUninitializedService();
+        SetField(service, "_greOptions", new TestOptionsMonitor<GreOptions>(new GreOptions { GrePdf = "" }));
+
+        var method = typeof(DailyReconciliationHostedService).GetMethod(
+            "ReconcileGreAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+
+        var task = (Task?)method!.Invoke(service, [false, false, 1, 10, CancellationToken.None]);
+        Assert.NotNull(task);
+        await task!;
+    }
+
+    [Fact]
+    public async Task ReconcileGreAsync_returns_early_when_gre_folder_does_not_exist()
+    {
+        var service = CreateUninitializedService();
+        SetField(service, "_greOptions", new TestOptionsMonitor<GreOptions>(new GreOptions
+        {
+            GrePdf = Path.Combine(_folder, "missing-gre")
+        }));
+
+        var method = typeof(DailyReconciliationHostedService).GetMethod(
+            "ReconcileGreAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+
+        var task = (Task?)method!.Invoke(service, [false, false, 1, 10, CancellationToken.None]);
+        Assert.NotNull(task);
+        await task!;
+    }
+
+    [Fact]
+    public async Task ReconcileIdocAsync_returns_early_when_watch_folder_cannot_be_resolved()
+    {
+        var idocOpts = new IdocOptions
+        {
+            BackOfficeConnectionString = "",
+            WatchFolder = "",
+            TibcoRoot = ""
+        };
+
+        var service = CreateUninitializedService();
+        SetField(service, "_idocOptions", new TestOptionsMonitor<IdocOptions>(idocOpts));
+        SetField(service, "_idocPaths", new IdocBackOfficePaths());
+        SetField(service, "_backOfficeReader", new BackOfficeParameterReader(
+            new TestOptionsMonitor<IdocOptions>(idocOpts),
+            NullLogger<BackOfficeParameterReader>.Instance));
+
+        var method = typeof(DailyReconciliationHostedService).GetMethod(
+            "ReconcileIdocAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+
+        var task = (Task?)method!.Invoke(service, [false, false, 1, 10, CancellationToken.None]);
+        Assert.NotNull(task);
+        await task!;
+    }
+
+    [Fact]
+    public async Task RunReconciliationAsync_completes_when_both_pipelines_are_disabled()
+    {
+        var service = CreateUninitializedService();
+        SetField(service, "_reconcileOptions", new TestOptionsMonitor<ReconciliationOptions>(new ReconciliationOptions
+        {
+            Enabled = true,
+            GreEnabled = false,
+            IdocEnabled = false,
+            MaxConcurrent = 2,
+            MaxFilesPerSource = 10,
+            SkipAlreadyInDatabase = true,
+            OnlyTodaysFiles = true
+        }));
+
+        var method = typeof(DailyReconciliationHostedService).GetMethod(
+            "RunReconciliationAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+
+        var task = (Task?)method!.Invoke(service, [CancellationToken.None]);
+        Assert.NotNull(task);
+        await task!;
+    }
+
+    [Fact]
+    public async Task ScheduleAndRunAsync_returns_fast_when_disabled_and_token_is_cancelled()
+    {
+        var service = CreateUninitializedService();
+        SetField(service, "_reconcileOptions", new TestOptionsMonitor<ReconciliationOptions>(new ReconciliationOptions
+        {
+            Enabled = false
+        }));
+
+        var method = typeof(DailyReconciliationHostedService).GetMethod(
+            "ScheduleAndRunAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var task = (Task?)method!.Invoke(service, [cts.Token]);
+        Assert.NotNull(task);
+        await task!;
+    }
+
+    [Fact]
+    public async Task ScheduleAndRunAsync_returns_fast_on_invalid_time_and_cancelled_token()
+    {
+        var service = CreateUninitializedService();
+        SetField(service, "_reconcileOptions", new TestOptionsMonitor<ReconciliationOptions>(new ReconciliationOptions
+        {
+            Enabled = true,
+            DailyTimeLocal = "invalid-time"
+        }));
+
+        var method = typeof(DailyReconciliationHostedService).GetMethod(
+            "ScheduleAndRunAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var task = (Task?)method!.Invoke(service, [cts.Token]);
+        Assert.NotNull(task);
+        await task!;
+    }
+
+    [Fact]
+    public async Task ResolveIdocFolderAsync_prefers_idocpaths_when_already_resolved()
+    {
+        var idocPaths = new IdocBackOfficePaths();
+        idocPaths.Apply("/tmp/from-paths", "/tmp/from-paths", resolvedFromDatabase: true);
+
+        var idocOpts = new IdocOptions
+        {
+            BackOfficeConnectionString = "",
+            WatchFolder = "/tmp/from-options",
+            TibcoRoot = "/tmp/from-options"
+        };
+
+        var service = CreateUninitializedService();
+        SetField(service, "_idocPaths", idocPaths);
+        SetField(service, "_idocOptions", new TestOptionsMonitor<IdocOptions>(idocOpts));
+        SetField(service, "_backOfficeReader", new BackOfficeParameterReader(
+            new TestOptionsMonitor<IdocOptions>(idocOpts),
+            NullLogger<BackOfficeParameterReader>.Instance));
+
+        var method = typeof(DailyReconciliationHostedService).GetMethod(
+            "ResolveIdocFolderAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+
+        var task = (Task<(string? Path, bool ResolvedFromDatabase)>?)method!.Invoke(service, [CancellationToken.None]);
+        Assert.NotNull(task);
+        var result = await task!;
+
+        Assert.Equal("/tmp/from-paths", result.Path);
+        Assert.True(result.ResolvedFromDatabase);
+    }
+
+    [Fact]
+    public async Task SafeDelayAsync_swallows_cancellation()
+    {
+        var method = typeof(DailyReconciliationHostedService).GetMethod(
+            "SafeDelayAsync",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var task = (Task?)method!.Invoke(null, [TimeSpan.FromMinutes(5), cts.Token]);
+        Assert.NotNull(task);
+        await task!;
+    }
+
+    [Fact]
+    public async Task ReconcileIdocAsync_returns_early_when_resolved_folder_does_not_exist()
+    {
+        var resolvedMissing = Path.Combine(_folder, "missing-idoc-folder");
+        var idocPaths = new IdocBackOfficePaths();
+        idocPaths.Apply(resolvedMissing, resolvedMissing, resolvedFromDatabase: true);
+
+        var idocOpts = new IdocOptions
+        {
+            BackOfficeConnectionString = "",
+            WatchFolder = "/tmp/unused",
+            TibcoRoot = "/tmp/unused"
+        };
+
+        var service = CreateUninitializedService();
+        SetField(service, "_idocPaths", idocPaths);
+        SetField(service, "_idocOptions", new TestOptionsMonitor<IdocOptions>(idocOpts));
+        SetField(service, "_backOfficeReader", new BackOfficeParameterReader(
+            new TestOptionsMonitor<IdocOptions>(idocOpts),
+            NullLogger<BackOfficeParameterReader>.Instance));
+
+        var method = typeof(DailyReconciliationHostedService).GetMethod(
+            "ReconcileIdocAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+
+        var task = (Task?)method!.Invoke(service, [false, false, 1, 10, CancellationToken.None]);
+        Assert.NotNull(task);
+        await task!;
+    }
+
+    [Fact]
+    public async Task ReconcileIdocAsync_completes_when_folder_exists_and_has_no_xml_candidates()
+    {
+        var existingFolder = Path.Combine(_folder, "idoc-empty");
+        Directory.CreateDirectory(existingFolder);
+
+        var idocPaths = new IdocBackOfficePaths();
+        idocPaths.Apply(existingFolder, existingFolder, resolvedFromDatabase: false);
+
+        var idocOpts = new IdocOptions
+        {
+            BackOfficeConnectionString = "",
+            WatchFolder = existingFolder,
+            TibcoRoot = existingFolder
+        };
+
+        var service = CreateUninitializedService();
+        SetField(service, "_idocPaths", idocPaths);
+        SetField(service, "_idocOptions", new TestOptionsMonitor<IdocOptions>(idocOpts));
+        SetField(service, "_backOfficeReader", new BackOfficeParameterReader(
+            new TestOptionsMonitor<IdocOptions>(idocOpts),
+            NullLogger<BackOfficeParameterReader>.Instance));
+
+        var method = typeof(DailyReconciliationHostedService).GetMethod(
+            "ReconcileIdocAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+
+        var task = (Task?)method!.Invoke(service, [true, false, 1, 10, CancellationToken.None]);
+        Assert.NotNull(task);
+        await task!;
+    }
+
     public void Dispose()
     {
         try
@@ -166,5 +411,35 @@ public sealed class DailyReconciliationHostedServiceTests : IDisposable
             BindingFlags.NonPublic | BindingFlags.Instance);
         loggerField?.SetValue(service, NullLogger<DailyReconciliationHostedService>.Instance);
         return service;
+    }
+
+    private static void SetField<T>(object target, string fieldName, T value)
+    {
+        var field = target.GetType().GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(field);
+        field!.SetValue(target, value);
+    }
+
+    private sealed class TestOptionsMonitor<TOptions> : IOptionsMonitor<TOptions>
+    {
+        public TestOptionsMonitor(TOptions currentValue)
+        {
+            CurrentValue = currentValue;
+        }
+
+        public TOptions CurrentValue { get; private set; }
+
+        public TOptions Get(string? name) => CurrentValue;
+
+        public IDisposable? OnChange(Action<TOptions, string?> listener) => NullDisposable.Instance;
+
+        private sealed class NullDisposable : IDisposable
+        {
+            public static readonly NullDisposable Instance = new();
+
+            public void Dispose()
+            {
+            }
+        }
     }
 }

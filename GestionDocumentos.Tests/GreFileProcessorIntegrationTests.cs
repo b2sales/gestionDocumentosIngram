@@ -103,6 +103,63 @@ public sealed class GreFileProcessorIntegrationTests : IDisposable
         Assert.False(File.Exists(Path.Combine(_dirPdfs, pdfFileName)));
     }
 
+    [Fact]
+    public async Task ProcessAsync_does_not_persist_when_motivo_traslado_is_invalid()
+    {
+        var processor = CreateProcessor(CreateOptions());
+        const string pdfFileName = "20267163228-09-T001-00118915.pdf";
+        var pdfPath = Path.Combine(_rootDir, pdfFileName);
+        var txtPath = Path.Combine(_greTxtDir, "20267163228-T001-0118915.txt");
+
+        await File.WriteAllTextAsync(pdfPath, "pdf-content");
+        await File.WriteAllLinesAsync(txtPath, BuildGreTxtLines(serie: "T001", correlativo: "0118915", motivoTraslado: "X"));
+
+        await processor.ProcessAsync(pdfPath, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        Assert.Empty(await verifyDb.GreInfos.ToListAsync());
+        Assert.False(File.Exists(Path.Combine(_dirPdfs, pdfFileName)));
+    }
+
+    [Fact]
+    public async Task ProcessAsync_does_not_persist_when_destination_code_is_invalid()
+    {
+        var processor = CreateProcessor(CreateOptions());
+        const string pdfFileName = "20267163228-09-T001-00118915.pdf";
+        var pdfPath = Path.Combine(_rootDir, pdfFileName);
+        var txtPath = Path.Combine(_greTxtDir, "20267163228-T001-0118915.txt");
+
+        await File.WriteAllTextAsync(pdfPath, "pdf-content");
+        var lines = BuildGreTxtLines(serie: "T001", correlativo: "0118915", motivoTraslado: "1");
+        lines[5] = "A;DirLlegUbiGeo;1;XX";
+        await File.WriteAllLinesAsync(txtPath, lines);
+
+        await processor.ProcessAsync(pdfPath, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        Assert.Empty(await verifyDb.GreInfos.ToListAsync());
+        Assert.False(File.Exists(Path.Combine(_dirPdfs, pdfFileName)));
+    }
+
+    [Fact]
+    public async Task ProcessAsync_does_not_persist_when_serie_or_correlativo_is_missing()
+    {
+        var processor = CreateProcessor(CreateOptions());
+        const string pdfFileName = "20267163228-09-T001-00118915.pdf";
+        var pdfPath = Path.Combine(_rootDir, pdfFileName);
+        var txtPath = Path.Combine(_greTxtDir, "20267163228-T001-0118915.txt");
+
+        await File.WriteAllTextAsync(pdfPath, "pdf-content");
+        var lines = BuildGreTxtLines(serie: "", correlativo: "0118915", motivoTraslado: "1");
+        await File.WriteAllLinesAsync(txtPath, lines);
+
+        await processor.ProcessAsync(pdfPath, CancellationToken.None);
+
+        await using var verifyDb = CreateContext();
+        Assert.Empty(await verifyDb.GreInfos.ToListAsync());
+        Assert.False(File.Exists(Path.Combine(_dirPdfs, pdfFileName)));
+    }
+
     public void Dispose()
     {
         try
