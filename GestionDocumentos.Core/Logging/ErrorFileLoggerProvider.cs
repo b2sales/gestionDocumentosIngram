@@ -30,7 +30,7 @@ public sealed class ErrorFileLoggerProvider : ILoggerProvider, ISupportExternalS
         var options = _options.CurrentValue;
         return options.Enabled &&
                !string.IsNullOrWhiteSpace(options.FolderPath) &&
-               logLevel >= LogLevel.Error;
+               logLevel >= LogLevel.Warning;
     }
 
     internal void WriteEntry(
@@ -41,7 +41,7 @@ public sealed class ErrorFileLoggerProvider : ILoggerProvider, ISupportExternalS
         Exception? exception)
     {
         var options = _options.CurrentValue;
-        if (!options.Enabled || string.IsNullOrWhiteSpace(options.FolderPath) || logLevel < LogLevel.Error)
+        if (!options.Enabled || string.IsNullOrWhiteSpace(options.FolderPath) || logLevel < LogLevel.Warning)
         {
             return;
         }

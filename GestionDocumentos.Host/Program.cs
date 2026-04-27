@@ -62,6 +62,7 @@ builder.Services.AddGrePipeline();
 builder.Services.AddIdocPipeline();
 
 builder.Services.AddHostedService<GreWatcherHostedService>();
+builder.Services.AddHostedService<GreTxtWatcherHostedService>();
 builder.Services.AddHostedService<IdocWatcherHostedService>();
 builder.Services.AddHostedService<DailyReconciliationHostedService>();
 builder.Services.AddHostedService<HeartbeatHostedService>();

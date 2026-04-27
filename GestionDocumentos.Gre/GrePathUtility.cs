@@ -19,6 +19,27 @@ public static class GrePathUtility
         return Path.Combine(greTxtDirectory, txtName);
     }
 
+    public static bool TryGetPdfSearchPatternFromTxtFileName(
+        string txtFileName,
+        [NotNullWhen(true)] out string? pdfPattern)
+    {
+        pdfPattern = null;
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(txtFileName);
+        if (string.IsNullOrWhiteSpace(fileNameWithoutExtension))
+        {
+            return false;
+        }
+
+        var txtCode = fileNameWithoutExtension.Split('-');
+        if (txtCode.Length != 3 || txtCode[2].Length != 7)
+        {
+            return false;
+        }
+
+        pdfPattern = $"{txtCode[0]}-*-{txtCode[1]}-?{txtCode[2]}*.pdf";
+        return true;
+    }
+
     /// <summary>
     /// Obtiene <c>greName</c> esperado en BD a partir del nombre del PDF.
     /// Usa el mismo token de 7 caracteres que el nombre del TXT compañero en <see cref="GetTxtPathForPdf"/>

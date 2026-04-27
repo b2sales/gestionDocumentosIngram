@@ -12,18 +12,40 @@ public sealed class GreFileProcessor : IFileProcessor
     private readonly IDbContextFactory<GreDbContext> _dbFactory;
     private readonly IOptionsMonitor<GreOptions> _options;
     private readonly ILogger<GreFileProcessor> _logger;
+    private readonly GreProcessingGate _processingGate;
 
     public GreFileProcessor(
         IDbContextFactory<GreDbContext> dbFactory,
         IOptionsMonitor<GreOptions> options,
-        ILogger<GreFileProcessor> logger)
+        ILogger<GreFileProcessor> logger,
+        GreProcessingGate processingGate)
     {
         _dbFactory = dbFactory;
         _options = options;
         _logger = logger;
+        _processingGate = processingGate;
     }
 
     public async Task ProcessAsync(string fullPath, CancellationToken cancellationToken)
+    {
+        var normalizedPath = Path.GetFullPath(fullPath);
+        if (!_processingGate.TryEnter(normalizedPath))
+        {
+            _logger.LogInformation("GRE: procesamiento ya en curso para {File}", Path.GetFileName(normalizedPath));
+            return;
+        }
+
+        try
+        {
+            await ProcessCoreAsync(normalizedPath, cancellationToken);
+        }
+        finally
+        {
+            _processingGate.Exit(normalizedPath);
+        }
+    }
+
+    private async Task ProcessCoreAsync(string fullPath, CancellationToken cancellationToken)
     {
         var fileName = Path.GetFileName(fullPath);
         if (string.IsNullOrWhiteSpace(fileName))

@@ -23,7 +23,9 @@ public static class GreServiceCollectionExtensions
         });
 
         services.AddSingleton<GreReconciliationLookup>();
+        services.AddSingleton<GreProcessingGate>();
         services.AddSingleton<GreFileProcessor>();
+        services.AddSingleton<GreTxtTriggerProcessor>();
         return services;
     }
 }

@@ -43,7 +43,7 @@ Buscar eventos con origen `GestionDocumentos`.
 Además del `Windows Event Log`, el servicio puede escribir errores en archivos rotados por día.
 
 - Se configura en la sección `ErrorFileLog` de `Parametros.json`
-- Solo persiste eventos `Error` y `Critical`
+- Persiste eventos `Warning`, `Error` y `Critical`
 - El archivo diario queda como `{FileNamePrefix}-yyyy-MM-dd.log`
 - `RetentionDays` elimina automáticamente logs más antiguos que la retención configurada
 
