@@ -5,7 +5,7 @@ using MimeKit;
 
 namespace GestionDocumentos.Core.Email;
 
-public sealed class SmtpErrorEmailSender
+public sealed class SmtpErrorEmailSender : IErrorEmailSender
 {
     private readonly IOptionsMonitor<SmtpErrorEmailOptions> _options;
 

@@ -1,0 +1,18 @@
+Muy alta prioridad — lógica core sin tests
+FolderWatcherEngine es el más crítico. Solo tiene 2 tests (cuarentena y fallo continuo), pero le faltan: el manejo de eventos normales (WatcherOnEvent), la recuperación automática ante errores del FileSystemWatcher (RecoverWatcherAsync), el rescan de archivos existentes al arranque, el flujo de consumo de la cola (ConsumeLoopAsync), y el comportamiento cuando la cola está llena. Es el corazón del sistema y está casi sin cubrir.
+GreFileProcessor y IdocFileProcessor tienen cero tests de integración. No hay nada que valide el flujo completo: archivo entra, se parsea, se inserta en la BD, se distribuye (en el caso de GRE). Sin esto, no podés saber si la secuencia "insertar entidad → copiar PDF → guardar cambios" funciona correctamente, ni cómo se comporta ante un duplicado en carrera.
+IdocRepository tampoco tiene tests. Contiene la lógica de transacciones, el batching de detalles (bloques de 50 filas), la detección de clave duplicada (errores SQL 2601/2627) y el retry transiente. Todo eso sin validación automatizada.
+
+Alta prioridad — flujos importantes sin cobertura
+SqlTransientRetry no tiene ningún test. Necesitás verificar: que los errores transitorios realmente disparan reintentos, que el backoff exponencial (200 × 2^intento) funciona bien, que a los 5 intentos se lanza la excepción, y que errores no transitorios fallan inmediatamente sin reintentar.
+DailyReconciliationHostedService tiene cero tests. Es tu red de seguridad nocturna — si falla silenciosamente, no te enterás. Habría que testear el cálculo del próximo horario de ejecución, el filtrado por fecha (OnlyTodaysFiles), los límites de archivos por fuente, y que no se ejecuten dos reconciliaciones simultáneas.
+El sistema de email completo (ErrorEmailQueue, SmtpErrorEmailSender, ErrorEmailQueueProcessorHostedService) tampoco tiene un solo test. El throttling, la ventana de agrupación de errores y la prevención de loops recursivos (cuando el email falla y eso genera otro email) son los puntos más delicados.
+
+Prioridad media — concurrencia y utilidades
+GreProcessingGate no está testeado. Es el que previene que dos workers procesen el mismo archivo en simultáneo — si falla, tenés duplicados o condiciones de carrera.
+GreTxtTriggerProcessor no tiene tests del flujo de reprocessing: cuando llega un .txt, cómo encuentra los PDFs candidatos y cómo los reencola.
+GreReconciliationLookup tiene lógica de batching en chunks de 500 nombres para la consulta a BD. No hay ningún test que valide eso.
+
+Recomendación de orden de trabajo
+Si tuviera que priorizar, empezaría por SqlTransientRetry (fácil de testear con SqlExceptions mockeadas, alto valor) → GreProcessingGate (concurrencia, crítico) → GreFileProcessor e IdocFileProcessor (flujo principal) → DailyReconciliationHostedService → FolderWatcherEngine (requiere más setup con mocks de filesystem).
+¿Querés que empiece a escribir alguno de estos tests?

@@ -53,6 +53,10 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
             _workers.Add(Task.Run(() => ConsumeLoopAsync(cancellationToken), cancellationToken));
         }
 
+        // Reescaneo inicial al arranque para cubrir archivos existentes
+        // (incluyendo ventanas en las que se pudo perder un evento del FSW).
+        SafeFireAndForget(EnqueueExistingFilesAsync, nameof(EnqueueExistingFilesAsync));
+
         return Task.CompletedTask;
     }
 

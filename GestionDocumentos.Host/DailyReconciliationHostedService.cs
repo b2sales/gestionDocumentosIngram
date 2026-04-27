@@ -106,7 +106,7 @@ public sealed class DailyReconciliationHostedService : BackgroundService
 
         // Lock de instancia: si la ejecución previa aún no terminó (p. ej. corrida manual + schedule),
         // saltamos esta corrida sin esperar y reprogramamos normalmente.
-        if (Interlocked.CompareExchange(ref _running, 1, 0) == 1)
+        if (!TryEnterRunLock())
         {
             _logger.LogWarning("Conciliación: ya hay una ejecución en curso. Se omite esta corrida.");
             return;
@@ -127,9 +127,15 @@ public sealed class DailyReconciliationHostedService : BackgroundService
         }
         finally
         {
-            Interlocked.Exchange(ref _running, 0);
+            ExitRunLock();
         }
     }
+
+    private bool TryEnterRunLock() =>
+        Interlocked.CompareExchange(ref _running, 1, 0) == 0;
+
+    private void ExitRunLock() =>
+        Interlocked.Exchange(ref _running, 0);
 
     private static async Task SafeDelayAsync(TimeSpan delay, CancellationToken token)
     {

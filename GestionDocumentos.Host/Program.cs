@@ -47,7 +47,7 @@ builder.Configuration.AddJsonFile(
 builder.Services.Configure<SmtpErrorEmailOptions>(builder.Configuration.GetSection("Smtp"));
 builder.Services.Configure<ErrorFileLogOptions>(builder.Configuration.GetSection("ErrorFileLog"));
 builder.Services.AddSingleton<ErrorEmailQueue>();
-builder.Services.AddSingleton<SmtpErrorEmailSender>();
+builder.Services.AddSingleton<IErrorEmailSender, SmtpErrorEmailSender>();
 builder.Services.AddHostedService<ErrorEmailQueueProcessorHostedService>();
 builder.Services.AddSingleton<ILoggerProvider, ErrorEmailLoggerProvider>();
 builder.Services.AddSingleton<ILoggerProvider, ErrorFileLoggerProvider>();
