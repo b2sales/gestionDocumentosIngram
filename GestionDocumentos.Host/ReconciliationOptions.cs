@@ -7,6 +7,12 @@ public sealed class ReconciliationOptions
     /// <summary>Hora local diaria para ejecutar la conciliación (24 h, formato <c>HH:mm</c>).</summary>
     public string DailyTimeLocal { get; set; } = "02:00";
 
+    /// <summary>
+    /// Horarios locales diarios para ejecutar la conciliación (formato <c>HH:mm</c>).
+    /// Si contiene valores, tiene prioridad sobre <see cref="DailyTimeLocal"/>.
+    /// </summary>
+    public string[] DailyTimesLocal { get; set; } = [];
+
     /// <summary>Si es true, solo archivos con fecha de creación o última escritura del día actual (hora local).</summary>
     public bool OnlyTodaysFiles { get; set; }
 

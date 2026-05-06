@@ -81,26 +81,29 @@ public sealed class DailyReconciliationHostedService : BackgroundService
             return;
         }
 
-        if (!TryParseLocalTime(opts.DailyTimeLocal, out var timeOfDay))
+        if (!TryGetScheduledTimes(opts, out var scheduledTimes, out var scheduleError))
         {
             _logger.LogError(
-                "Conciliación: hora inválida en DailyTimeLocal '{Value}'. Use HH:mm (24 h).",
-                opts.DailyTimeLocal);
+                "Conciliación: configuración de horario inválida ({Error}). Use HH:mm (24 h).",
+                scheduleError);
             await SafeDelayAsync(TimeSpan.FromHours(1), stoppingToken);
             return;
         }
 
-        var nextLocal = GetNextLocalRunTime(timeOfDay);
+        var nextLocal = GetNextLocalRunTime(scheduledTimes);
         var delay = nextLocal - DateTimeOffset.Now;
         if (delay < TimeSpan.Zero)
         {
             delay = TimeSpan.Zero;
         }
 
+        var configuredTimes = string.Join(", ", scheduledTimes.Select(t => $"{t.Hours:D2}:{t.Minutes:D2}"));
+
         _logger.LogInformation(
-            "Conciliación diaria programada para {NextLocal:yyyy-MM-dd HH:mm zzz} (hora local), en {Delay}",
+            "Conciliación programada para {NextLocal:yyyy-MM-dd HH:mm zzz} (hora local), en {Delay}. Horarios configurados: {Times}",
             nextLocal,
-            delay);
+            delay,
+            configuredTimes);
 
         await Task.Delay(delay, stoppingToken);
 
@@ -491,15 +494,72 @@ public sealed class DailyReconciliationHostedService : BackgroundService
         return true;
     }
 
+    private static bool TryGetScheduledTimes(
+        ReconciliationOptions options,
+        out List<TimeSpan> scheduledTimes,
+        out string error)
+    {
+        scheduledTimes = new List<TimeSpan>();
+        error = string.Empty;
+
+        IEnumerable<string> configured = options.DailyTimesLocal is { Length: > 0 }
+            ? options.DailyTimesLocal
+            : [options.DailyTimeLocal];
+
+        foreach (var rawValue in configured)
+        {
+            if (!TryParseLocalTime(rawValue, out var parsed))
+            {
+                error = $"valor inválido '{rawValue}'";
+                scheduledTimes.Clear();
+                return false;
+            }
+
+            if (!scheduledTimes.Contains(parsed))
+            {
+                scheduledTimes.Add(parsed);
+            }
+        }
+
+        if (scheduledTimes.Count == 0)
+        {
+            error = "sin horarios configurados";
+            return false;
+        }
+
+        scheduledTimes.Sort();
+        return true;
+    }
+
     /// <summary>
     /// Devuelve el próximo <see cref="DateTimeOffset"/> local a <paramref name="timeOfDay"/>.
     /// Usamos <see cref="DateTimeOffset"/> para que los saltos de DST (horario de verano) no
     /// provoquen corridas duplicadas o perdidas respecto a la versión basada en <see cref="DateTime"/>.
     /// </summary>
-    private static DateTimeOffset GetNextLocalRunTime(TimeSpan timeOfDay)
+    private static DateTimeOffset GetNextLocalRunTime(IReadOnlyList<TimeSpan> timesOfDay)
     {
+        if (timesOfDay.Count == 0)
+        {
+            throw new ArgumentException("At least one schedule time is required.", nameof(timesOfDay));
+        }
+
         var now = DateTimeOffset.Now;
-        var candidate = new DateTimeOffset(now.Year, now.Month, now.Day, timeOfDay.Hours, timeOfDay.Minutes, 0, now.Offset);
-        return now <= candidate ? candidate : candidate.AddDays(1);
+        DateTimeOffset? next = null;
+
+        foreach (var timeOfDay in timesOfDay)
+        {
+            var candidate = new DateTimeOffset(now.Year, now.Month, now.Day, timeOfDay.Hours, timeOfDay.Minutes, 0, now.Offset);
+            if (candidate < now)
+            {
+                candidate = candidate.AddDays(1);
+            }
+
+            if (next is null || candidate < next.Value)
+            {
+                next = candidate;
+            }
+        }
+
+        return next!.Value;
     }
 }

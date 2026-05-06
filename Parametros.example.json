@@ -40,6 +40,7 @@
   "Reconciliation": {
     "Enabled": true,
     "DailyTimeLocal": "20:00",
+    "DailyTimesLocal": ["08:00", "14:00", "20:00"],
     "OnlyTodaysFiles": false,
     "GreEnabled": true,
     "IdocEnabled": true,

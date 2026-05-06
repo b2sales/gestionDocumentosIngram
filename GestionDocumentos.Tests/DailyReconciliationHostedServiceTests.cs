@@ -63,11 +63,59 @@ public sealed class DailyReconciliationHostedServiceTests : IDisposable
         var todayTime = ParseTime(parseMethod!, $"{plusOneMinute:HH:mm}");
         var tomorrowTime = ParseTime(parseMethod!, $"{minusOneMinute:HH:mm}");
 
-        var nextToday = (DateTimeOffset)(nextMethod!.Invoke(null, [todayTime]) ?? default(DateTimeOffset));
-        var nextTomorrow = (DateTimeOffset)(nextMethod.Invoke(null, [tomorrowTime]) ?? default(DateTimeOffset));
+        var nextToday = (DateTimeOffset)(nextMethod!.Invoke(null, [new List<TimeSpan> { todayTime }]) ?? default(DateTimeOffset));
+        var nextTomorrow = (DateTimeOffset)(nextMethod.Invoke(null, [new List<TimeSpan> { tomorrowTime }]) ?? default(DateTimeOffset));
 
         Assert.Equal(now.Date, nextToday.Date);
         Assert.Equal(now.Date.AddDays(1), nextTomorrow.Date);
+    }
+
+    [Fact]
+    public void TryGetScheduledTimes_uses_multiple_values_and_sorts_distinct()
+    {
+        var method = typeof(DailyReconciliationHostedService).GetMethod(
+            "TryGetScheduledTimes",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        var options = new ReconciliationOptions
+        {
+            DailyTimeLocal = "20:00",
+            DailyTimesLocal = ["18:00", "08:30", "18:00"]
+        };
+
+        var args = new object?[] { options, null, null };
+        var ok = (bool)(method!.Invoke(null, args) ?? false);
+
+        Assert.True(ok);
+        var parsed = Assert.IsType<List<TimeSpan>>(args[1]);
+        Assert.Collection(
+            parsed,
+            x => Assert.Equal(new TimeSpan(8, 30, 0), x),
+            x => Assert.Equal(new TimeSpan(18, 0, 0), x));
+    }
+
+    [Fact]
+    public void TryGetScheduledTimes_falls_back_to_single_daily_time()
+    {
+        var method = typeof(DailyReconciliationHostedService).GetMethod(
+            "TryGetScheduledTimes",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        var options = new ReconciliationOptions
+        {
+            DailyTimeLocal = "06:45",
+            DailyTimesLocal = []
+        };
+
+        var args = new object?[] { options, null, null };
+        var ok = (bool)(method!.Invoke(null, args) ?? false);
+
+        Assert.True(ok);
+        var parsed = Assert.IsType<List<TimeSpan>>(args[1]);
+        Assert.Single(parsed);
+        Assert.Equal(new TimeSpan(6, 45, 0), parsed[0]);
     }
 
     [Fact]

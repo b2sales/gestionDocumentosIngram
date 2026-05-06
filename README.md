@@ -216,6 +216,7 @@ Si la clave de carpeta está vacía (`"greFailed": ""`), la cuarentena queda des
 "Reconciliation": {
   "Enabled": true,
   "DailyTimeLocal": "20:00",
+  "DailyTimesLocal": ["08:00", "14:00", "20:00"],
   "OnlyTodaysFiles": false,
   "GreEnabled": true,
   "IdocEnabled": true,
@@ -228,7 +229,8 @@ Si la clave de carpeta está vacía (`"greFailed": ""`), la cuarentena queda des
 | Campo | Descripción |
 |-------|-------------|
 | `Enabled` | Activa o desactiva la reconciliación diaria. |
-| `DailyTimeLocal` | Hora local de ejecución en formato `HH:mm` (ej: `"20:00"`). |
+| `DailyTimeLocal` | Hora local de ejecución en formato `HH:mm` (ej: `"20:00"`). Se usa como fallback si `DailyTimesLocal` no está configurado. |
+| `DailyTimesLocal` | Lista de horarios locales en formato `HH:mm` para ejecutar la reconciliación varias veces al día (ej: `["08:00","14:00","20:00"]`). |
 | `OnlyTodaysFiles` | `true`: solo reprocesa archivos del día. `false`: reprocesa todos los archivos de la carpeta. |
 | `GreEnabled` | Incluye el pipeline GRE en la reconciliación. |
 | `IdocEnabled` | Incluye el pipeline IDOC en la reconciliación. |
