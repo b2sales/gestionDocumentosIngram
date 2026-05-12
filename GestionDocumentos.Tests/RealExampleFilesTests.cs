@@ -111,14 +111,14 @@ public sealed class RealExampleFilesTests
     }
 
     [Fact]
-    public void Idoc_BackOfficePaths_ToArchivoTibcoRelative_Preserves_Leading_Separator()
+    public void Idoc_BackOfficePaths_ToArchivoTibcoRelative_Removes_Leading_Separator()
     {
         var paths = new IdocBackOfficePaths();
         paths.Apply(@"C:\tibco\in", @"C:\tibco\in", resolvedFromDatabase: true);
 
         var relative = paths.ToArchivoTibcoRelative(@"C:\tibco\in\01_NPG_F007_0655433.xml");
 
-        Assert.Equal(@"\01_NPG_F007_0655433.xml", relative);
+        Assert.Equal("01_NPG_F007_0655433.xml", relative);
     }
 
     [Fact]

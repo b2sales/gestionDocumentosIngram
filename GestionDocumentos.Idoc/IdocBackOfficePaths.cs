@@ -31,7 +31,8 @@ public sealed class IdocBackOfficePaths
 
         if (fullPath.StartsWith(TibcoRoot, StringComparison.OrdinalIgnoreCase))
         {
-            return fullPath[TibcoRoot.Length..];
+            return fullPath[TibcoRoot.Length..]
+                .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         }
 
         return fullPath;
