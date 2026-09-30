@@ -26,3 +26,9 @@ Parametros.json
 *.log
 *.tmp
 TestResults/
+
+## Documentos y artefactos locales (no van al repositorio)
+Reporte_Ejecutivo_Arquitectura_GestionDocumentos.docx
+RUNBOOK-FALLAS-EXTERNAS.md
+tmp-test-stub.pdf
+db/
