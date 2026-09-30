@@ -257,13 +257,23 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
                 return;
             }
 
-            var destPath = BuildUniquePath(Path.Combine(dayFolder, baseName));
-            if (File.Exists(sourcePath))
+            string logPath;
+            if (_options.MoveFailedFiles)
             {
-                File.Move(sourcePath, destPath);
+                var destPath = BuildUniquePath(Path.Combine(dayFolder, baseName));
+                if (File.Exists(sourcePath))
+                {
+                    File.Move(sourcePath, destPath);
+                }
+
+                logPath = destPath + ".log";
+            }
+            else
+            {
+                // Archivo permanece en origen; solo dejamos el .log de diagnóstico.
+                logPath = BuildUniquePath(Path.Combine(dayFolder, baseName + ".log"));
             }
 
-            var logPath = destPath + ".log";
             File.WriteAllText(
                 logPath,
                 $"Fecha: {DateTime.Now:O}\r\nArchivo origen: {sourcePath}\r\n\r\n--- Excepción ---\r\n{ex}\r\n");
@@ -301,7 +311,8 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
             {
                 if (File.Exists(fullPath))
                 {
-                    var share = _options.RequireExclusiveReadinessLock ? FileShare.None : FileShare.ReadWrite;
+                    // FileShare.Read: falla si hay escritores activos, pero permite lectores concurrentes.
+                    var share = _options.RequireExclusiveReadinessLock ? FileShare.Read : FileShare.ReadWrite;
                     using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, share);
                     if (stream.Length > 0)
                     {

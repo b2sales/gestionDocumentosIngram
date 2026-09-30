@@ -86,7 +86,9 @@ public sealed class GreWatcherHostedService : BackgroundService
             RequireExclusiveReadinessLock = true,
             InternalBufferSize = o.WatcherInternalBufferSize,
             FailedFolder = o.FailedFolder,
-            MaxProcessAttempts = o.MaxProcessAttempts
+            MaxProcessAttempts = o.MaxProcessAttempts,
+            // No mover PDFs fallidos fuera de grePDF: el equipo de impresión lee de esa carpeta.
+            MoveFailedFiles = false
         };
 
         var engine = new FolderWatcherEngine(_processor, watcherOptions, _watcherLogger);

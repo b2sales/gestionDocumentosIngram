@@ -55,6 +55,40 @@ public sealed class FolderWatcherEngineBehaviorTests : IAsyncDisposable
         Assert.Contains(filePath, processor.ProcessedPaths);
     }
 
+    [Fact(Timeout = 15_000)]
+    public async Task WaitUntilReady_with_exclusive_lock_allows_concurrent_readers()
+    {
+        var existing = Path.Combine(_watchDir, "shared-read.dat");
+        await File.WriteAllTextAsync(existing, "payload");
+
+        var processor = new RecordingProcessor();
+        await using var engine = new FolderWatcherEngine(
+            processor,
+            new WatcherOptions
+            {
+                Path = _watchDir,
+                Filter = "*.dat",
+                WorkerCount = 1,
+                QueueCapacity = 8,
+                FileReadyRetries = 10,
+                FileReadyDelayMs = 50,
+                RequireExclusiveReadinessLock = true,
+                InternalBufferSize = 8192,
+                RescanMaxFiles = 5000,
+                RescanMaxAge = TimeSpan.FromDays(7)
+            },
+            NullLogger<FolderWatcherEngine>.Instance);
+
+        // Simula otro lector (p. ej. impresión) con el archivo abierto en modo lectura compartida.
+        await using var reader = new FileStream(existing, FileMode.Open, FileAccess.Read, FileShare.Read);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await engine.StartAsync(cts.Token);
+        await WaitUntilAsync(() => processor.ProcessedPaths.Contains(existing), cts.Token);
+
+        Assert.Contains(existing, processor.ProcessedPaths);
+    }
+
     [Fact(Timeout = 20_000)]
     public async Task Queue_full_does_not_drop_files_under_burst()
     {

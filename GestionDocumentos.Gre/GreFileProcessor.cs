@@ -303,11 +303,12 @@ public sealed class GreFileProcessor : IFileProcessor
             {
                 if (File.Exists(filePath))
                 {
+                    // FileShare.Read: falla si hay escritores activos, pero permite lectores concurrentes.
                     await using var stream = new FileStream(
                         filePath,
                         FileMode.Open,
                         FileAccess.Read,
-                        requireExclusiveLock ? FileShare.None : FileShare.ReadWrite,
+                        requireExclusiveLock ? FileShare.Read : FileShare.ReadWrite,
                         bufferSize: 4096,
                         FileOptions.Asynchronous);
                     if (stream.Length > 0)

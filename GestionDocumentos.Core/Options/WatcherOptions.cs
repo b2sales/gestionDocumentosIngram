@@ -8,6 +8,12 @@ public sealed class WatcherOptions
     public int WorkerCount { get; init; } = 4;
     public int FileReadyRetries { get; init; } = 10;
     public int FileReadyDelayMs { get; init; } = 500;
+
+    /// <summary>
+    /// Si es <c>true</c>, la comprobación de "archivo listo" exige que no haya escritores
+    /// activos (<see cref="FileShare.Read"/>). Permite lectores concurrentes (p. ej. impresión).
+    /// Si es <c>false</c>, usa <see cref="FileShare.ReadWrite"/>.
+    /// </summary>
     public bool RequireExclusiveReadinessLock { get; init; }
 
     /// <summary>Tamaño del buffer interno de <see cref="FileSystemWatcher"/> (bytes). Mayor valor reduce pérdida de eventos bajo carga.</summary>
@@ -19,6 +25,13 @@ public sealed class WatcherOptions
     /// El engine crea subcarpeta <c>yyyy-MM-dd/</c> automáticamente.
     /// </summary>
     public string FailedFolder { get; init; } = "";
+
+    /// <summary>
+    /// Si es <c>true</c> (por defecto), al llegar a cuarentena se mueve el archivo a
+    /// <see cref="FailedFolder"/>. Si es <c>false</c>, el archivo permanece en origen y
+    /// solo se escribe el <c>.log</c> de diagnóstico en la carpeta de fallidos.
+    /// </summary>
+    public bool MoveFailedFiles { get; init; } = true;
 
     /// <summary>
     /// Número máximo de intentos de procesamiento por archivo antes de mover a <see cref="FailedFolder"/>.

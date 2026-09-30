@@ -91,6 +91,77 @@ public sealed class FolderWatcherEngineResilienceTests : IAsyncDisposable
         }
     }
 
+    [Fact(Timeout = 15_000)]
+    public async Task Quarantine_with_MoveFailedFiles_false_keeps_source_and_writes_log()
+    {
+        var failedFolder = Path.Combine(Path.GetTempPath(), "gd-tests-failed-nomove-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var processor = new ThrowingProcessor();
+            var options = new WatcherOptions
+            {
+                Path = _watchDir,
+                Filter = "*.dat",
+                WorkerCount = 1,
+                QueueCapacity = 8,
+                FileReadyRetries = 2,
+                FileReadyDelayMs = 50,
+                RequireExclusiveReadinessLock = false,
+                InternalBufferSize = 8192,
+                FailedFolder = failedFolder,
+                MaxProcessAttempts = 2,
+                MoveFailedFiles = false
+            };
+
+            await using var engine = new FolderWatcherEngine(processor, options, NullLogger<FolderWatcherEngine>.Instance);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+            await engine.StartAsync(cts.Token);
+
+            var fileName = "stay.dat";
+            var sourcePath = Path.Combine(_watchDir, fileName);
+            await File.WriteAllTextAsync(sourcePath, "payload", cts.Token);
+
+            await Task.Delay(500, cts.Token);
+
+            if (File.Exists(sourcePath))
+            {
+                File.SetLastWriteTime(sourcePath, DateTime.Now);
+                await File.WriteAllTextAsync(sourcePath, "payload2", cts.Token);
+            }
+
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            string? logPath = null;
+            while (logPath is null && DateTime.UtcNow < deadline)
+            {
+                if (Directory.Exists(failedFolder))
+                {
+                    logPath = Directory
+                        .EnumerateFiles(failedFolder, "*.log", SearchOption.AllDirectories)
+                        .FirstOrDefault(p => Path.GetFileName(p).StartsWith(fileName, StringComparison.OrdinalIgnoreCase));
+                }
+
+                if (logPath is null)
+                {
+                    await Task.Delay(100, cts.Token);
+                }
+            }
+
+            Assert.NotNull(logPath);
+            Assert.True(File.Exists(sourcePath), "archivo original debe permanecer en origen");
+            Assert.Empty(Directory.EnumerateFiles(failedFolder, fileName, SearchOption.AllDirectories));
+
+            using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await engine.StopAsync(stopCts.Token);
+        }
+        finally
+        {
+            if (Directory.Exists(failedFolder))
+            {
+                Directory.Delete(failedFolder, recursive: true);
+            }
+        }
+    }
+
     [Fact(Timeout = 10_000)]
     public async Task Engine_keeps_running_when_processor_always_throws()
     {
