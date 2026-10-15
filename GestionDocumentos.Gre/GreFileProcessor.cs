@@ -254,17 +254,53 @@ public sealed class GreFileProcessor : IFileProcessor
         };
 
         var copyTo = Path.Combine(destinationDirectory, pathTo ?? "");
+
+        const int shareViolationRetries = 3;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await CopyPdfOnceAsync(filePath, copyTo, cancellationToken);
+            }
+            catch (IOException ex) when (attempt < shareViolationRetries)
+            {
+                // El PDF puede estar momentáneamente en uso por el servicio de impresión.
+                _logger.LogWarning(
+                    ex,
+                    "PDF {File} en uso (intento {Attempt}/{Max}); reintentando.",
+                    Path.GetFileName(filePath),
+                    attempt,
+                    shareViolationRetries);
+                await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error copiado de PDF hacia {Dest}", copyTo);
+                return false;
+            }
+        }
+    }
+
+    private async Task<bool> CopyPdfOnceAsync(
+        string filePath,
+        string copyTo,
+        CancellationToken cancellationToken)
+    {
         const int bufferSizeInBytes = 500 * 1024;
 
-        try
+        var before = new FileInfo(filePath);
+        var lengthBefore = before.Length;
+        var lastWriteBefore = before.LastWriteTimeUtc;
+
+        await using (var inputFile = new FileStream(
+            filePath,
+            FileMode.Open,
+            FileAccess.Read,
+            // FileShare.Delete: no impedimos que otro proceso renombre o borre el PDF mientras lo leemos.
+            FileShare.ReadWrite | FileShare.Delete,
+            bufferSize: bufferSizeInBytes,
+            useAsync: true))
         {
-            await using var inputFile = new FileStream(
-                filePath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.ReadWrite,
-                bufferSize: bufferSizeInBytes,
-                useAsync: true);
             await using var outputFile = new FileStream(
                 copyTo,
                 FileMode.Create,
@@ -279,13 +315,35 @@ public sealed class GreFileProcessor : IFileProcessor
             {
                 await outputFile.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
             }
+        }
 
-            return true;
+        // Sin bloqueo exclusivo, verificamos a posteriori que el origen no cambió durante la copia.
+        var after = new FileInfo(filePath);
+        if (!after.Exists || after.Length != lengthBefore || after.LastWriteTimeUtc != lastWriteBefore)
+        {
+            _logger.LogWarning(
+                "PDF {File} cambió durante la copia; se descarta {Dest} y se reintentará.",
+                Path.GetFileName(filePath),
+                copyTo);
+            TryDeleteIncompleteCopy(copyTo);
+            return false;
+        }
+
+        return true;
+    }
+
+    private void TryDeleteIncompleteCopy(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error copiado de PDF hacia {Dest}", copyTo);
-            return false;
+            _logger.LogWarning(ex, "No se pudo eliminar la copia incompleta {Dest}", path);
         }
     }
 
@@ -304,11 +362,12 @@ public sealed class GreFileProcessor : IFileProcessor
                 if (File.Exists(filePath))
                 {
                     // FileShare.Read: falla si hay escritores activos, pero permite lectores concurrentes.
+                    // FileShare.Delete: no bloqueamos el renombrado ni el borrado por parte de otros.
                     await using var stream = new FileStream(
                         filePath,
                         FileMode.Open,
                         FileAccess.Read,
-                        requireExclusiveLock ? FileShare.Read : FileShare.ReadWrite,
+                        (requireExclusiveLock ? FileShare.Read : FileShare.ReadWrite) | FileShare.Delete,
                         bufferSize: 4096,
                         FileOptions.Asynchronous);
                     if (stream.Length > 0)

@@ -83,7 +83,9 @@ public sealed class GreWatcherHostedService : BackgroundService
             WorkerCount = o.ProcessingConcurrency,
             FileReadyRetries = o.FileReadyRetries,
             FileReadyDelayMs = o.FileReadyDelayMs,
-            RequireExclusiveReadinessLock = true,
+            // El servicio de impresión lee esta misma carpeta: no abrimos los PDF para sondearlos.
+            ReadinessMode = FileReadinessMode.StableMetadata,
+            QuietPeriod = TimeSpan.FromSeconds(Math.Max(0, o.QuietPeriodSeconds)),
             InternalBufferSize = o.WatcherInternalBufferSize,
             FailedFolder = o.FailedFolder,
             MaxProcessAttempts = o.MaxProcessAttempts,

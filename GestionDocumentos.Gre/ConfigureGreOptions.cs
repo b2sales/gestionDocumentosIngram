@@ -59,5 +59,10 @@ public sealed class ConfigureGreOptions : IConfigureOptions<GreOptions>
         {
             options.MaxProcessAttempts = Math.Max(1, attempts);
         }
+
+        if (int.TryParse(_configuration["greQuietPeriodSeconds"], out var quiet))
+        {
+            options.QuietPeriodSeconds = Math.Max(0, quiet);
+        }
     }
 }

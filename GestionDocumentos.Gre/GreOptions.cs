@@ -21,4 +21,10 @@ public sealed class GreOptions
 
     /// <summary>Intentos antes de mover a cuarentena. Mínimo 1.</summary>
     public int MaxProcessAttempts { get; set; } = 3;
+
+    /// <summary>
+    /// Segundos que debe tener un PDF antes de procesarlo, para darle margen al servicio de
+    /// impresión que comparte la carpeta. 0 desactiva la espera.
+    /// </summary>
+    public int QuietPeriodSeconds { get; set; }
 }

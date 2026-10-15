@@ -166,7 +166,7 @@ public sealed class IdocWatcherHostedService : BackgroundService
             WorkerCount = options.ProcessingConcurrency,
             FileReadyRetries = options.FileReadyRetries,
             FileReadyDelayMs = options.FileReadyDelayMs,
-            RequireExclusiveReadinessLock = true,
+            ReadinessMode = FileReadinessMode.SharedReadProbe,
             InternalBufferSize = options.WatcherInternalBufferSize,
             FailedFolder = options.FailedFolder,
             MaxProcessAttempts = options.MaxProcessAttempts

@@ -16,6 +16,7 @@
   "fileReadyDelayMs": "1000",
   "watcherInternalBufferSize": "65536",
   "maxProcessAttempts": "3",
+  "greQuietPeriodSeconds": "0",
   "environmentTest": "False",
 
   "greFailed": "\\\\servidor\\carpeta\\failed\\gre",

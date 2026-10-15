@@ -188,6 +188,7 @@ El servicio elige entre rutas de producción y rutas de test según el valor de 
 | `fileReadyDelayMs` | `1000` | Milisegundos entre cada intento de verificación de archivo listo. |
 | `watcherInternalBufferSize` | `65536` | Tamaño del buffer interno del FileSystemWatcher (bytes). Aumentar si hay picos de muchos archivos simultáneos. |
 | `maxProcessAttempts` | `3` | Intentos máximos antes de enviar un archivo a cuarentena (DLQ). Mínimo: `1`. |
+| `greQuietPeriodSeconds` | `0` | Segundos de antigüedad mínima de un PDF de `grePDF` antes de procesarlo. Sirve para dar margen al servicio de impresión que comparte esa carpeta. `0` desactiva la espera; los archivos que aún no cumplen el plazo se reencolan solos, sin ocupar workers. |
 | `environmentTest` | `"False"` | `"True"` para usar rutas y conexiones con sufijo `Test`. Siempre `"False"` en producción. |
 
 ### Cuarentena (DLQ)

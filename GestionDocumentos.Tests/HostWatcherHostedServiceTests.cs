@@ -71,7 +71,7 @@ public sealed class HostWatcherHostedServiceTests
         Assert.Equal(7, watcherOptions.WorkerCount);
         Assert.Equal(9, watcherOptions.FileReadyRetries);
         Assert.Equal(77, watcherOptions.FileReadyDelayMs);
-        Assert.True(watcherOptions.RequireExclusiveReadinessLock);
+        Assert.Equal(GestionDocumentos.Core.Options.FileReadinessMode.SharedReadProbe, watcherOptions.ReadinessMode);
         Assert.Equal(9999, watcherOptions.InternalBufferSize);
         Assert.Equal("/tmp/failed", watcherOptions.FailedFolder);
         Assert.Equal(4, watcherOptions.MaxProcessAttempts);

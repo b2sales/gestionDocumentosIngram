@@ -30,7 +30,7 @@ public sealed class FolderWatcherEngineResilienceTests : IAsyncDisposable
                 QueueCapacity = 8,
                 FileReadyRetries = 2,
                 FileReadyDelayMs = 50,
-                RequireExclusiveReadinessLock = false,
+                ReadinessMode = FileReadinessMode.ReadWriteProbe,
                 InternalBufferSize = 8192,
                 FailedFolder = failedFolder,
                 MaxProcessAttempts = 2
@@ -106,7 +106,7 @@ public sealed class FolderWatcherEngineResilienceTests : IAsyncDisposable
                 QueueCapacity = 8,
                 FileReadyRetries = 2,
                 FileReadyDelayMs = 50,
-                RequireExclusiveReadinessLock = false,
+                ReadinessMode = FileReadinessMode.ReadWriteProbe,
                 InternalBufferSize = 8192,
                 FailedFolder = failedFolder,
                 MaxProcessAttempts = 2,
@@ -174,7 +174,7 @@ public sealed class FolderWatcherEngineResilienceTests : IAsyncDisposable
             QueueCapacity = 16,
             FileReadyRetries = 2,
             FileReadyDelayMs = 50,
-            RequireExclusiveReadinessLock = false,
+            ReadinessMode = FileReadinessMode.ReadWriteProbe,
             InternalBufferSize = 8192
         };
 

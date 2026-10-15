@@ -140,6 +140,13 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
 
         try
         {
+            var wait = RemainingQuietPeriod(fullPath);
+            if (wait > TimeSpan.Zero)
+            {
+                // Esperamos fuera del worker: bloquearlo dejaría al engine sin capacidad de proceso.
+                await Task.Delay(wait, _runCancellationToken);
+            }
+
             await _queue.Writer.WriteAsync(fullPath, _runCancellationToken);
         }
         catch (OperationCanceledException) when (_runCancellationToken.IsCancellationRequested || _stopping)
@@ -157,6 +164,29 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
         }
     }
 
+    private TimeSpan RemainingQuietPeriod(string fullPath)
+    {
+        if (_options.QuietPeriod <= TimeSpan.Zero)
+        {
+            return TimeSpan.Zero;
+        }
+
+        try
+        {
+            var age = DateTime.UtcNow - File.GetLastWriteTimeUtc(fullPath);
+            var remaining = _options.QuietPeriod - age;
+            return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+        }
+        catch (IOException)
+        {
+            return TimeSpan.Zero;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return TimeSpan.Zero;
+        }
+    }
+
     private async Task ConsumeLoopAsync(CancellationToken cancellationToken)
     {
         try
@@ -168,7 +198,12 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
                     var success = false;
                     try
                     {
-                        if (await WaitUntilReadyAsync(fullPath, cancellationToken))
+                        if (!File.Exists(fullPath))
+                        {
+                            // Otro proceso ya lo movió o borró; no es un fallo nuestro.
+                            _logger.LogDebug("Archivo ya no existe, se omite: {Path}", fullPath);
+                        }
+                        else if (await WaitUntilReadyAsync(fullPath, cancellationToken))
                         {
                             await _processor.ProcessAsync(fullPath, cancellationToken);
                             success = true;
@@ -304,6 +339,16 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
 
     private async Task<bool> WaitUntilReadyAsync(string fullPath, CancellationToken cancellationToken)
     {
+        if (_options.ReadinessMode == FileReadinessMode.StableMetadata)
+        {
+            return await WaitUntilStableAsync(fullPath, cancellationToken);
+        }
+
+        // FileShare.Delete permite que otro proceso renombre o borre el archivo mientras lo sondeamos.
+        var share = _options.ReadinessMode == FileReadinessMode.SharedReadProbe
+            ? FileShare.Read | FileShare.Delete
+            : FileShare.ReadWrite | FileShare.Delete;
+
         for (var i = 0; i < _options.FileReadyRetries; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -311,8 +356,6 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
             {
                 if (File.Exists(fullPath))
                 {
-                    // FileShare.Read: falla si hay escritores activos, pero permite lectores concurrentes.
-                    var share = _options.RequireExclusiveReadinessLock ? FileShare.Read : FileShare.ReadWrite;
                     using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, share);
                     if (stream.Length > 0)
                     {
@@ -331,6 +374,60 @@ public sealed class FolderWatcherEngine : IAsyncDisposable
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Determina si el archivo terminó de escribirse comparando tamaño y fecha entre dos muestras
+    /// consecutivas, sin abrirlo. Es el modo adecuado cuando otro servicio lee la misma carpeta:
+    /// un handle nuestro, por permisivo que sea, hace fallar a quien abra en modo exclusivo.
+    /// </summary>
+    private async Task<bool> WaitUntilStableAsync(string fullPath, CancellationToken cancellationToken)
+    {
+        // Dos coincidencias seguidas: un generador que pausa entre bloques no se confunde con uno terminado.
+        const int requiredStableSamples = 2;
+
+        var previous = TryReadStamp(fullPath);
+        var stableSamples = 0;
+
+        for (var i = 0; i < _options.FileReadyRetries; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.Delay(_options.FileReadyDelayMs, cancellationToken);
+
+            var current = TryReadStamp(fullPath);
+            if (current is { Length: > 0 } && current == previous)
+            {
+                if (++stableSamples >= requiredStableSamples)
+                {
+                    return true;
+                }
+            }
+            else
+            {
+                stableSamples = 0;
+            }
+
+            previous = current;
+        }
+
+        return false;
+    }
+
+    private static (long Length, DateTime LastWriteUtc)? TryReadStamp(string fullPath)
+    {
+        try
+        {
+            var info = new FileInfo(fullPath);
+            return info.Exists ? (info.Length, info.LastWriteTimeUtc) : null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     private FileSystemWatcher CreateWatcher()

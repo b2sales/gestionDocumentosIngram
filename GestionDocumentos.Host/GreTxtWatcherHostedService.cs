@@ -83,7 +83,7 @@ public sealed class GreTxtWatcherHostedService : BackgroundService
             WorkerCount = Math.Max(1, Math.Min(o.ProcessingConcurrency, 4)),
             FileReadyRetries = o.FileReadyRetries,
             FileReadyDelayMs = o.FileReadyDelayMs,
-            RequireExclusiveReadinessLock = true,
+            ReadinessMode = FileReadinessMode.SharedReadProbe,
             InternalBufferSize = o.WatcherInternalBufferSize,
             FailedFolder = "",
             MaxProcessAttempts = o.MaxProcessAttempts

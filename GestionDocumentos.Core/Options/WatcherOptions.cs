@@ -1,5 +1,23 @@
 namespace GestionDocumentos.Core.Options;
 
+/// <summary>
+/// Estrategia para decidir si un archivo terminó de escribirse y puede procesarse.
+/// </summary>
+public enum FileReadinessMode
+{
+    /// <summary>Abre el archivo permitiendo otros lectores. Detecta escritores activos.</summary>
+    SharedReadProbe,
+
+    /// <summary>Abre el archivo permitiendo lectores y escritores.</summary>
+    ReadWriteProbe,
+
+    /// <summary>
+    /// No abre el archivo: exige tamaño y fecha de modificación estables entre dos muestras.
+    /// Único modo que no puede bloquear a otros procesos sobre la carpeta vigilada.
+    /// </summary>
+    StableMetadata
+}
+
 public sealed class WatcherOptions
 {
     public required string Path { get; init; }
@@ -10,11 +28,18 @@ public sealed class WatcherOptions
     public int FileReadyDelayMs { get; init; } = 500;
 
     /// <summary>
-    /// Si es <c>true</c>, la comprobación de "archivo listo" exige que no haya escritores
-    /// activos (<see cref="FileShare.Read"/>). Permite lectores concurrentes (p. ej. impresión).
-    /// Si es <c>false</c>, usa <see cref="FileShare.ReadWrite"/>.
+    /// Estrategia de comprobación de "archivo listo". Usar
+    /// <see cref="FileReadinessMode.StableMetadata"/> en carpetas compartidas con otros
+    /// servicios: es la única que no abre el archivo y por tanto nunca los bloquea.
     /// </summary>
-    public bool RequireExclusiveReadinessLock { get; init; }
+    public FileReadinessMode ReadinessMode { get; init; } = FileReadinessMode.SharedReadProbe;
+
+    /// <summary>
+    /// Antigüedad mínima (por <see cref="File.GetLastWriteTimeUtc"/>) que debe tener un archivo
+    /// antes de procesarse. <see cref="TimeSpan.Zero"/> desactiva la espera. Los archivos más
+    /// nuevos se reencolan automáticamente al cumplirse el plazo, sin ocupar workers.
+    /// </summary>
+    public TimeSpan QuietPeriod { get; init; } = TimeSpan.Zero;
 
     /// <summary>Tamaño del buffer interno de <see cref="FileSystemWatcher"/> (bytes). Mayor valor reduce pérdida de eventos bajo carga.</summary>
     public int InternalBufferSize { get; init; } = 65536;
